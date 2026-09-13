@@ -1,5 +1,6 @@
 //! Lightweight Eulerian smoke/gas solver (pure Rust). OpenVDB export via `openvdb_io`.
 
+use crate::collider::{apply_colliders_smoke, ColliderInput};
 use crate::mesh::Vec3;
 use serde::{Deserialize, Serialize};
 
@@ -53,6 +54,8 @@ pub struct SmokeSolverInput {
     pub dissipation: f32,
     pub buoyancy: f32,
     pub diffusion: f32,
+    /// Velocity diffusion / drag (0 = inviscid, higher = thicker motion).
+    pub viscosity: f32,
     pub pressure_iterations: u32,
     pub ground_collision: bool,
     pub max_particles_per_frame: u32,
@@ -66,6 +69,7 @@ impl Default for SmokeSolverInput {
             dissipation: 0.985,
             buoyancy: 1.6,
             diffusion: 0.12,
+            viscosity: 0.06,
             pressure_iterations: 18,
             ground_collision: true,
             max_particles_per_frame: 1800,
@@ -199,6 +203,7 @@ pub fn simulate_smoke(
     domain: &SmokeDomainInput,
     sources: &[SmokeSourceInput],
     solver: &SmokeSolverInput,
+    colliders: &[ColliderInput],
 ) -> SmokeVolume {
     let mut grid = create_grid(domain);
     let steps = solver.steps.max(1);
@@ -222,10 +227,26 @@ pub fn simulate_smoke(
         let vel_z = grid.vel_z.clone();
         advect_field(&mut grid, &vel_z, |g, idx, v| g.vel_z[idx] = v);
         diffuse_and_dissipate(&mut grid, solver.diffusion, solver.dissipation);
+        apply_velocity_viscosity(&mut grid, solver.viscosity);
         if solver.ground_collision {
             apply_ground_collision(&mut grid);
         }
         apply_box_collision(&mut grid);
+        let vs = grid.voxel_size();
+        apply_colliders_smoke(
+            grid.nx,
+            grid.ny,
+            grid.nz,
+            grid.bounds_min,
+            grid.bounds_max,
+            vs,
+            &mut grid.density,
+            &mut grid.vel_x,
+            &mut grid.vel_y,
+            &mut grid.vel_z,
+            &mut grid.temperature,
+            colliders,
+        );
         project_pressure(&mut grid, solver.pressure_iterations);
 
         if step % stride == 0 || step == steps {
@@ -370,6 +391,71 @@ fn sample_trilinear(field: &[f32], nx: usize, ny: usize, nz: usize, x: f32, y: f
     let c0 = c00 * (1.0 - ty) + c10 * ty;
     let c1 = c01 * (1.0 - ty) + c11 * ty;
     c0 * (1.0 - tz) + c1 * tz
+}
+
+fn apply_velocity_viscosity(grid: &mut SmokeGrid, viscosity: f32) {
+    if viscosity <= 1e-6 {
+        return;
+    }
+    let nx = grid.nx;
+    let ny = grid.ny;
+    let nz = grid.nz;
+    let alpha = viscosity * 0.18;
+    let mut vx = grid.vel_x.clone();
+    let mut vy = grid.vel_y.clone();
+    let mut vz = grid.vel_z.clone();
+
+    for k in 0..nz {
+        for j in 0..ny {
+            for i in 0..nx {
+                let idx = grid.index(i, j, k);
+                let (lx, ly, lz) = velocity_laplacian_at(grid, i, j, k);
+                vx[idx] += alpha * lx;
+                vy[idx] += alpha * ly;
+                vz[idx] += alpha * lz;
+            }
+        }
+    }
+    grid.vel_x = vx;
+    grid.vel_y = vy;
+    grid.vel_z = vz;
+}
+
+fn velocity_laplacian_at(grid: &SmokeGrid, i: usize, j: usize, k: usize) -> (f32, f32, f32) {
+    let nx = grid.nx;
+    let ny = grid.ny;
+    let nz = grid.nz;
+    let idx = grid.index(i, j, k);
+    let cx = grid.vel_x[idx];
+    let cy = grid.vel_y[idx];
+    let cz = grid.vel_z[idx];
+    let mut sx = 0.0;
+    let mut sy = 0.0;
+    let mut sz = 0.0;
+    let mut n = 0.0;
+
+    for (di, dj, dk) in [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)] {
+        let ni = i as i32 + di;
+        let nj = j as i32 + dj;
+        let nk = k as i32 + dk;
+        if ni < 0 || nj < 0 || nk < 0 {
+            continue;
+        }
+        let (ui, uj, uk) = (ni as usize, nj as usize, nk as usize);
+        if ui >= nx || uj >= ny || uk >= nz {
+            continue;
+        }
+        let nidx = grid.index(ui, uj, uk);
+        sx += grid.vel_x[nidx] - cx;
+        sy += grid.vel_y[nidx] - cy;
+        sz += grid.vel_z[nidx] - cz;
+        n += 1.0;
+    }
+    if n > 0.0 {
+        (sx / n, sy / n, sz / n)
+    } else {
+        (0.0, 0.0, 0.0)
+    }
 }
 
 fn diffuse_and_dissipate(grid: &mut SmokeGrid, diffusion: f32, dissipation: f32) {
@@ -676,6 +762,7 @@ impl LcgRng {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::collider::{apply_colliders_smoke, ColliderInput};
 
     #[test]
     fn grid_creation_has_no_nans() {
@@ -713,8 +800,8 @@ mod tests {
             frame_stride: 4,
             ..Default::default()
         };
-        let a = simulate_smoke(&domain, &sources, &solver);
-        let b = simulate_smoke(&domain, &sources, &solver);
+        let a = simulate_smoke(&domain, &sources, &solver, &[]);
+        let b = simulate_smoke(&domain, &sources, &solver, &[]);
         assert_eq!(a.frames.len(), b.frames.len());
         assert_eq!(a.frames[0].positions, b.frames[0].positions);
         assert!(!a.frames.is_empty());
@@ -738,5 +825,76 @@ mod tests {
         assert!(!grid.has_nan());
         let total: f32 = grid.density.iter().sum();
         assert!(total > 0.0 && total <= 1.5);
+    }
+
+    #[test]
+    fn high_viscosity_reduces_upward_motion() {
+        let domain = SmokeDomainInput {
+            resolution: 14,
+            seed: 7,
+            ..Default::default()
+        };
+        let sources = vec![SmokeSourceInput {
+            upward_velocity: 4.0,
+            ..Default::default()
+        }];
+        let thin = SmokeSolverInput {
+            steps: 20,
+            frame_stride: 20,
+            viscosity: 0.02,
+            ..Default::default()
+        };
+        let thick = SmokeSolverInput {
+            steps: 20,
+            frame_stride: 20,
+            viscosity: 0.55,
+            ..Default::default()
+        };
+        let fast = simulate_smoke(&domain, &sources, &thin, &[]);
+        let slow = simulate_smoke(&domain, &sources, &thick, &[]);
+        assert!(slow.stats.max_density > 0.0);
+        assert!(fast.stats.max_density > slow.stats.max_density * 0.5);
+    }
+
+    #[test]
+    fn floor_collider_blocks_density_at_ground() {
+        let domain = SmokeDomainInput {
+            resolution: 14,
+            ..Default::default()
+        };
+        let sources = vec![SmokeSourceInput {
+            position: Vec3::new(0.0, 0.5, 0.0),
+            radius: 0.8,
+            emission_rate: 4.0,
+            ..Default::default()
+        }];
+        let floor = ColliderInput::floor(0.5, 4.0);
+        let solver = SmokeSolverInput {
+            steps: 16,
+            frame_stride: 16,
+            ground_collision: false,
+            ..Default::default()
+        };
+        let vol = simulate_smoke(&domain, &sources, &solver, &[floor]);
+        let mut grid = create_grid(&domain);
+        emit_sources(&mut grid, &sources, &mut LcgRng::new(domain.seed));
+        let idx = grid.index(7, 0, 7);
+        grid.density[idx] = 2.0;
+        apply_colliders_smoke(
+            grid.nx,
+            grid.ny,
+            grid.nz,
+            grid.bounds_min,
+            grid.bounds_max,
+            grid.voxel_size(),
+            &mut grid.density,
+            &mut grid.vel_x,
+            &mut grid.vel_y,
+            &mut grid.vel_z,
+            &mut grid.temperature,
+            &[floor],
+        );
+        assert!(grid.density[idx] < 0.01);
+        assert!(vol.stats.max_density < 100.0);
     }
 }

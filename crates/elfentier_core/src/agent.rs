@@ -1,6 +1,7 @@
 //! Agent-oriented preset and parameter helpers.
 
 use crate::building::BuildingParams;
+use crate::collider::ColliderInput;
 use crate::graph::{evaluate_liquid_volume, evaluate_smoke_volume, graph_mode, Graph, GraphMode, NodeKind};
 use crate::liquid::{export_particle_cache, LiquidDomainInput, LiquidSolverInput, LiquidSourceInput};
 use crate::openvdb_io::{export_openvdb_fog, OpenVdbExportResult};
@@ -22,6 +23,7 @@ pub struct SetSmokeParamsRequest {
     pub domain: Option<SmokeDomainInput>,
     pub source: Option<SmokeSourceInput>,
     pub solver: Option<SmokeSolverInput>,
+    pub collider: Option<ColliderInput>,
 }
 
 /// Liquid parameter update request for agents.
@@ -31,6 +33,7 @@ pub struct SetLiquidParamsRequest {
     pub domain: Option<LiquidDomainInput>,
     pub source: Option<LiquidSourceInput>,
     pub solver: Option<LiquidSolverInput>,
+    pub collider: Option<ColliderInput>,
 }
 
 /// Lists available graph presets for agents and UI.
@@ -49,22 +52,27 @@ pub fn list_presets() -> Vec<PresetInfo> {
         PresetInfo {
             id: "smoke_puff".into(),
             name: "Smoke Puff".into(),
-            description: "Eulerian gas/smoke simulation with viewport particle preview".into(),
+            description: "Thin Eulerian smoke (薄い煙) with floor collider".into(),
+        },
+        PresetInfo {
+            id: "smoke_viscous".into(),
+            name: "Smoke Viscous".into(),
+            description: "Viscous smoke (ねっとり) with slower, thicker motion".into(),
         },
         PresetInfo {
             id: "ocean_patch".into(),
             name: "Ocean Patch".into(),
-            description: "Wide FLIP liquid body with gentle surface wave forcing".into(),
+            description: "Wide FLIP liquid body (水) with floor collider and gentle waves".into(),
         },
         PresetInfo {
             id: "waterfall".into(),
             name: "Waterfall".into(),
-            description: "Elevated liquid source with gravity-driven cascade".into(),
+            description: "Elevated liquid source with basin floor collider".into(),
         },
         PresetInfo {
             id: "flood_basin".into(),
             name: "Flood Basin".into(),
-            description: "Basin fill from inflow source over time".into(),
+            description: "Basin fill (とろみ) with wall collider and higher viscosity".into(),
         },
     ]
 }
@@ -75,6 +83,7 @@ pub fn get_preset(id: &str) -> Option<Graph> {
         "shop_street" => Some(Graph::shop_street_preset()),
         "grid_block" => Some(Graph::grid_block_preset()),
         "smoke_puff" => Some(Graph::smoke_puff_preset()),
+        "smoke_viscous" => Some(Graph::smoke_viscous_preset()),
         "ocean_patch" => Some(Graph::ocean_patch_preset()),
         "waterfall" => Some(Graph::waterfall_preset()),
         "flood_basin" => Some(Graph::flood_basin_preset()),
@@ -117,6 +126,11 @@ pub fn set_smoke_params(request: &SetSmokeParamsRequest) -> Graph {
                 node.smoke_solver = Some(solver);
             }
         }
+        if let Some(collider) = request.collider {
+            if node.kind == NodeKind::SmokeCollider {
+                node.smoke_collider = Some(collider);
+            }
+        }
     }
     g
 }
@@ -138,6 +152,11 @@ pub fn set_liquid_params(request: &SetLiquidParamsRequest) -> Graph {
         if let Some(solver) = request.solver {
             if node.kind == NodeKind::LiquidSolver {
                 node.liquid_solver = Some(solver);
+            }
+        }
+        if let Some(collider) = request.collider {
+            if node.kind == NodeKind::LiquidCollider {
+                node.liquid_collider = Some(collider);
             }
         }
     }

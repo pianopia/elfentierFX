@@ -10,12 +10,14 @@ const PRESET_LAYOUT: Record<string, { x: number; y: number }> = {
   merge_instances: { x: 520, y: 400 },
   city_root: { x: 760, y: 120 },
   smoke_domain: { x: 40, y: 140 },
-  smoke_source: { x: 280, y: 140 },
-  smoke_solver: { x: 520, y: 140 },
+  smoke_source: { x: 220, y: 140 },
+  smoke_collider: { x: 400, y: 140 },
+  smoke_solver: { x: 580, y: 140 },
   smoke_root: { x: 760, y: 140 },
   liquid_domain: { x: 40, y: 140 },
-  liquid_source: { x: 280, y: 140 },
-  liquid_solver: { x: 520, y: 140 },
+  liquid_source: { x: 220, y: 140 },
+  liquid_collider: { x: 400, y: 140 },
+  liquid_solver: { x: 580, y: 140 },
   liquid_root: { x: 760, y: 140 },
 };
 
@@ -62,9 +64,11 @@ export function flowToGraph(
       smoke_domain: null,
       smoke_source: null,
       smoke_solver: null,
+      smoke_collider: null,
       liquid_domain: null,
       liquid_source: null,
       liquid_solver: null,
+      liquid_collider: null,
     };
   });
 
@@ -90,9 +94,11 @@ export function mergePresetInputs(graph: Graph, preset: Graph): Graph {
         smoke_domain: node.smoke_domain ?? presetNode.smoke_domain,
         smoke_source: node.smoke_source ?? presetNode.smoke_source,
         smoke_solver: node.smoke_solver ?? presetNode.smoke_solver,
+        smoke_collider: node.smoke_collider ?? presetNode.smoke_collider,
         liquid_domain: node.liquid_domain ?? presetNode.liquid_domain,
         liquid_source: node.liquid_source ?? presetNode.liquid_source,
         liquid_solver: node.liquid_solver ?? presetNode.liquid_solver,
+        liquid_collider: node.liquid_collider ?? presetNode.liquid_collider,
       };
     }),
   };

@@ -40,6 +40,15 @@ Building → city workflow plus smoke/gas:
 - **Export bundles** — manifest + payloads for Unity, Unreal, Blender (`Export Bundle` in UI)
 - **Agent API** — see [docs/agent-api.md](docs/agent-api.md) and [docs/export-formats.md](docs/export-formats.md)
 
+### Fluids Phase 2 — collision + viscosity
+
+Vertical slice on top of Phase 1 (not production multiphase):
+
+- **Viscosity** — `viscosity` on `SmokeSolver` (velocity diffusion) and `LiquidSolver` (grid Laplacian damp). Presets: **薄い煙** (`smoke_puff`, low viscosity) vs **ねっとり** (`smoke_viscous`); **水** (ocean/waterfall) vs **とろみ** (flood basin, higher viscosity).
+- **Collision** — `SmokeCollider` / `LiquidCollider` nodes (static AABB box) wired between source and solver. Solids zero inward velocity; optional `kill_inside` clears smoke density / pushes liquid particles out. Floor/wall colliders are included in ocean, waterfall, flood, and smoke puff presets.
+- **Viewport** — collider AABB wireframes (amber lines) overlay the wgpu preview during cook.
+- **Limits** — single static AABB per collider node; no mesh SDF or moving colliders yet. Documented in agent API.
+
 **Alpha 2 (OpenVDB I/O spike):** smoke graphs export an optional `smoke_density.vdb` fog FloatGrid (last frame) alongside `.evol` / atlas payloads. Reading uses `vdb-rs`; writing is a pure-Rust minimal encoder (uncompressed active-mask). Open `.vdb` in standard OpenVDB readers and tools. Unity users install **[Unity Volume Importer](https://github.com/pianopia/UnityVolumeImporter)** (`com.louddin.unity-volume-importer`) for legacy `.evol` in-editor import — native `.vdb` there remains on that product's roadmap.
 
 OpenVDB is a trademark of LF Projects, LLC.

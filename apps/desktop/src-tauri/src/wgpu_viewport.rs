@@ -170,6 +170,28 @@ fn fs_main(input: VsOut) -> @location(0) vec4f {
 }
 "#;
 
+const COLLIDER_SHADER: &str = r#"
+struct Camera {
+    view_proj: mat4x4f,
+}
+
+@group(0) @binding(0) var<uniform> camera: Camera;
+
+struct VsIn {
+    @location(0) position: vec3f,
+}
+
+@vertex
+fn vs_main(input: VsIn) -> @builtin(position) vec4f {
+    return camera.view_proj * vec4f(input.position, 1.0);
+}
+
+@fragment
+fn fs_main() -> @location(0) vec4f {
+    return vec4f(0.95, 0.62, 0.22, 1.0);
+}
+"#;
+
 const GRID_SHADER: &str = r#"
 struct Camera {
     view_proj: mat4x4f,
@@ -337,6 +359,13 @@ fn bounds_for_mesh(mesh: &ViewportMesh) -> ([f32; 3], [f32; 3]) {
         for axis in 0..3 {
             min[axis] = min[axis].min(liquid.bounds_min[axis]);
             max[axis] = max[axis].max(liquid.bounds_max[axis]);
+        }
+    }
+
+    for collider in &mesh.colliders {
+        for axis in 0..3 {
+            min[axis] = min[axis].min(collider.bounds_min[axis]);
+            max[axis] = max[axis].max(collider.bounds_max[axis]);
         }
     }
 
@@ -621,6 +650,14 @@ async fn render_wgpu(
     let (min, max) = bounds_for_mesh(mesh);
     let (mesh_vertices, mesh_indices) = merge_mesh(mesh);
     let grid_lines = build_grid_lines(min, max);
+    let mut collider_lines: Vec<[f32; 3]> = Vec::new();
+    for collider in &mesh.colliders {
+        for chunk in collider.lines.chunks(3) {
+            if chunk.len() == 3 {
+                collider_lines.push([chunk[0], chunk[1], chunk[2]]);
+            }
+        }
+    }
 
     let output_texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("native viewport color"),
@@ -669,6 +706,10 @@ async fn render_wgpu(
     let grid_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("grid shader"),
         source: wgpu::ShaderSource::Wgsl(GRID_SHADER.into()),
+    });
+    let collider_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("collider shader"),
+        source: wgpu::ShaderSource::Wgsl(COLLIDER_SHADER.into()),
     });
 
     let mesh_camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -799,6 +840,49 @@ async fn render_wgpu(
         },
         fragment: Some(wgpu::FragmentState {
             module: &grid_shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::LineList,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth32Float,
+            depth_write_enabled: false,
+            depth_compare: wgpu::CompareFunction::LessEqual,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    });
+
+    let collider_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("collider pipeline"),
+        layout: Some(&mesh_pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &collider_shader,
+            entry_point: Some("vs_main"),
+            buffers: &[wgpu::VertexBufferLayout {
+                array_stride: 12,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &[wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x3,
+                    offset: 0,
+                    shader_location: 0,
+                }],
+            }],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &collider_shader,
             entry_point: Some("fs_main"),
             targets: &[Some(wgpu::ColorTargetState {
                 format: wgpu::TextureFormat::Rgba8UnormSrgb,
@@ -958,6 +1042,17 @@ async fn render_wgpu(
         }))
     };
 
+    let collider_flat: Vec<f32> = collider_lines.iter().flat_map(|p| p.iter().copied()).collect();
+    let collider_vertex_buffer = if collider_flat.is_empty() {
+        None
+    } else {
+        Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("collider lines"),
+            contents: bytemuck::cast_slice(&collider_flat),
+            usage: wgpu::BufferUsages::VERTEX,
+        }))
+    };
+
     let smoke_particles = mesh
         .smoke
         .as_ref()
@@ -1023,6 +1118,15 @@ async fn render_wgpu(
             pass.set_bind_group(0, grid_bg, &[]);
             pass.set_vertex_buffer(0, grid_vb.slice(..));
             pass.draw(0..grid_lines.len() as u32, 0..1);
+        }
+
+        if let (Some(collider_vb), Some(collider_bg)) =
+            (&collider_vertex_buffer, Some(&grid_bind_group))
+        {
+            pass.set_pipeline(&collider_pipeline);
+            pass.set_bind_group(0, collider_bg, &[]);
+            pass.set_vertex_buffer(0, collider_vb.slice(..));
+            pass.draw(0..collider_lines.len() as u32, 0..1);
         }
 
         if let (Some(vb), Some(ib), Some(bg)) = (

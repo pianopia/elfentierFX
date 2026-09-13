@@ -1,6 +1,8 @@
 //! Viewport-ready mesh payload with GPU instancing and smoke particle support.
 
-use crate::graph::{evaluate_city_instanced, evaluate_liquid_volume, evaluate_smoke_volume, Graph, GraphMode};
+use crate::collider::all_wireframe_segments;
+use crate::collider::ColliderInput;
+use crate::graph::{colliders_from_graph, evaluate_city_instanced, evaluate_liquid_volume, evaluate_smoke_volume, Graph, GraphMode};
 use crate::liquid::LiquidVolume;
 use crate::placement::InstanceTransform;
 use crate::mesh::Mesh;
@@ -50,6 +52,15 @@ pub struct ViewportSmoke {
     pub stats: crate::smoke::SmokeStats,
 }
 
+/// Wireframe AABB overlay for a collider node.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ViewportColliderWireframe {
+    pub bounds_min: [f32; 3],
+    pub bounds_max: [f32; 3],
+    /// Line list XYZ triplets (two points per segment).
+    pub lines: Vec<f32>,
+}
+
 /// Efficient mesh buffers for real-time viewport upload.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ViewportMesh {
@@ -70,6 +81,9 @@ pub struct ViewportMesh {
     /// Present when the graph cooks a liquid volume.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub liquid: Option<ViewportLiquid>,
+    /// Collider AABB wireframes from fluid graph nodes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub colliders: Vec<ViewportColliderWireframe>,
 }
 
 /// Converts an instance transform to a column-major 4×4 matrix matching mesh transform math.
@@ -99,6 +113,24 @@ pub fn instance_to_matrix(inst: &InstanceTransform) -> InstanceMatrix {
     ]
 }
 
+pub fn pack_collider_wireframes(colliders: &[ColliderInput]) -> Vec<ViewportColliderWireframe> {
+    colliders
+        .iter()
+        .filter(|c| c.enabled)
+        .map(|c| {
+            let segments = all_wireframe_segments(std::slice::from_ref(c));
+            ViewportColliderWireframe {
+                bounds_min: [c.bounds_min.x, c.bounds_min.y, c.bounds_min.z],
+                bounds_max: [c.bounds_max.x, c.bounds_max.y, c.bounds_max.z],
+                lines: segments
+                    .iter()
+                    .flat_map(|p| [p[0], p[1], p[2]])
+                    .collect(),
+            }
+        })
+        .collect()
+}
+
 /// Packs a mesh into flat position/index buffers plus per-instance matrices.
 pub fn pack_viewport_mesh(
     base: &Mesh,
@@ -106,6 +138,7 @@ pub fn pack_viewport_mesh(
     graph_name: &str,
     smoke: Option<ViewportSmoke>,
     liquid: Option<ViewportLiquid>,
+    colliders: Vec<ViewportColliderWireframe>,
 ) -> ViewportMesh {
     let positions: Vec<f32> = base
         .positions
@@ -136,6 +169,7 @@ pub fn pack_viewport_mesh(
         graph_name: graph_name.to_string(),
         smoke,
         liquid,
+        colliders,
     }
 }
 
@@ -168,7 +202,7 @@ pub fn pack_viewport_smoke(volume: &SmokeVolume, graph_name: &str) -> ViewportMe
         frames,
     };
 
-    pack_viewport_mesh(&Mesh::unnamed(), &[], graph_name, Some(smoke), None)
+    pack_viewport_mesh(&Mesh::unnamed(), &[], graph_name, Some(smoke), None, Vec::new())
 }
 
 pub fn pack_viewport_liquid(volume: &LiquidVolume, graph_name: &str) -> ViewportMesh {
@@ -200,23 +234,35 @@ pub fn pack_viewport_liquid(volume: &LiquidVolume, graph_name: &str) -> Viewport
         frames,
     };
 
-    pack_viewport_mesh(&Mesh::unnamed(), &[], graph_name, None, Some(liquid))
+    pack_viewport_mesh(&Mesh::unnamed(), &[], graph_name, None, Some(liquid), Vec::new())
 }
 
 /// Evaluates the graph and returns viewport buffers (city mesh and/or smoke).
 pub fn cook_viewport_mesh(graph: &Graph) -> Result<ViewportMesh, String> {
+    let colliders = pack_collider_wireframes(&colliders_from_graph(graph));
     match graph_mode(graph) {
         GraphMode::Liquid => {
             let volume = evaluate_liquid_volume(graph)?;
-            Ok(pack_viewport_liquid(&volume, &graph.name))
+            let mut mesh = pack_viewport_liquid(&volume, &graph.name);
+            mesh.colliders = colliders;
+            Ok(mesh)
         }
         GraphMode::Smoke => {
             let volume = evaluate_smoke_volume(graph)?;
-            Ok(pack_viewport_smoke(&volume, &graph.name))
+            let mut mesh = pack_viewport_smoke(&volume, &graph.name);
+            mesh.colliders = colliders;
+            Ok(mesh)
         }
         GraphMode::City => {
             let city = evaluate_city_instanced(graph)?;
-            Ok(pack_viewport_mesh(&city.base_mesh, &city.instances, &graph.name, None, None))
+            Ok(pack_viewport_mesh(
+                &city.base_mesh,
+                &city.instances,
+                &graph.name,
+                None,
+                None,
+                colliders,
+            ))
         }
     }
 }
@@ -248,6 +294,7 @@ mod tests {
         let smoke = mesh.smoke.expect("smoke payload");
         assert!(smoke.frame_count >= 2);
         assert!(smoke.frames[0].particle_count > 0);
+        assert!(!mesh.colliders.is_empty());
     }
 
     #[test]

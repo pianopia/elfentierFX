@@ -1,5 +1,8 @@
 //! FLIP-style particle–grid liquid solver (pure Rust, realtime-friendly).
 
+use crate::collider::{
+    apply_colliders_liquid_grid, resolve_particle_colliders, ColliderInput,
+};
 use crate::mesh::Vec3;
 use serde::{Deserialize, Serialize};
 
@@ -203,6 +206,7 @@ pub fn simulate_liquid(
     domain: &LiquidDomainInput,
     sources: &[LiquidSourceInput],
     solver: &LiquidSolverInput,
+    colliders: &[ColliderInput],
 ) -> LiquidVolume {
     let grid = create_grid(domain);
     let mut particles = seed_particles(domain, &grid);
@@ -232,6 +236,20 @@ pub fn simulate_liquid(
         apply_viscosity(&mut g, solver.viscosity);
         apply_terrain_collision(&mut g, solver.terrain_height);
         apply_box_collision(&mut g);
+        let vs = g.voxel_size();
+        apply_colliders_liquid_grid(
+            g.nx,
+            g.ny,
+            g.nz,
+            g.bounds_min,
+            g.bounds_max,
+            vs,
+            &g.weight,
+            &mut g.vel_x,
+            &mut g.vel_y,
+            &mut g.vel_z,
+            colliders,
+        );
         project_pressure(&mut g, solver.pressure_iterations);
 
         grid_to_particles(
@@ -245,6 +263,14 @@ pub fn simulate_liquid(
 
         advect_particles(&mut particles, dt);
         clamp_particles_to_domain(&mut particles, domain);
+        for p in particles.iter_mut() {
+            resolve_particle_colliders(
+                &mut p.pos,
+                &mut p.vel,
+                domain.particle_radius,
+                colliders,
+            );
+        }
         cull_excess(&mut particles, max_particles);
 
         let step_max = particles
@@ -908,6 +934,7 @@ pub fn particles_in_bounds(volume: &LiquidVolume, domain: &LiquidDomainInput) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::collider::ColliderInput;
 
     #[test]
     fn simulation_has_no_nans() {
@@ -922,7 +949,7 @@ mod tests {
             frame_stride: 5,
             ..Default::default()
         };
-        let vol = simulate_liquid(&domain, &sources, &solver);
+        let vol = simulate_liquid(&domain, &sources, &solver, &[]);
         assert!(!vol.frames.is_empty());
         for frame in &vol.frames {
             for v in &frame.positions {
@@ -950,7 +977,7 @@ mod tests {
             frame_stride: 6,
             ..Default::default()
         };
-        let vol = simulate_liquid(&domain, &sources, &solver);
+        let vol = simulate_liquid(&domain, &sources, &solver, &[]);
         assert!(particles_in_bounds(&vol, &domain));
     }
 
@@ -968,8 +995,8 @@ mod tests {
             frame_stride: 5,
             ..Default::default()
         };
-        let a = simulate_liquid(&domain, &sources, &solver);
-        let b = simulate_liquid(&domain, &sources, &solver);
+        let a = simulate_liquid(&domain, &sources, &solver, &[]);
+        let b = simulate_liquid(&domain, &sources, &solver, &[]);
         assert_eq!(a.frames.len(), b.frames.len());
         assert_eq!(a.frames[0].positions, b.frames[0].positions);
     }
@@ -986,7 +1013,7 @@ mod tests {
             max_particles: 2000,
             ..Default::default()
         };
-        let vol = simulate_liquid(&domain, &[], &solver);
+        let vol = simulate_liquid(&domain, &[], &solver, &[]);
         assert!(vol.stats.particle_count > 0);
         assert!(vol.stats.particle_count <= 2000);
         assert!(vol.stats.max_speed < 50.0);
@@ -1012,8 +1039,73 @@ mod tests {
             wave_frequency: 1.5,
             ..Default::default()
         };
-        let flat = simulate_liquid(&domain, &[], &solver_flat);
-        let wave = simulate_liquid(&domain, &[], &solver_wave);
+        let flat = simulate_liquid(&domain, &[], &solver_flat, &[]);
+        let wave = simulate_liquid(&domain, &[], &solver_wave, &[]);
         assert!(wave.stats.max_speed >= flat.stats.max_speed * 0.8);
+    }
+
+    #[test]
+    fn high_viscosity_reduces_max_speed() {
+        let domain = LiquidDomainInput {
+            resolution: 14,
+            seed: 9,
+            initial_particles: 600,
+            ..Default::default()
+        };
+        let sources = vec![LiquidSourceInput {
+            position: Vec3::new(0.0, 4.5, 0.0),
+            emission_rate: 6.0,
+            velocity: Vec3::new(0.0, -4.0, 0.0),
+            ..Default::default()
+        }];
+        let water = LiquidSolverInput {
+            steps: 24,
+            viscosity: 0.01,
+            ..Default::default()
+        };
+        let syrup = LiquidSolverInput {
+            steps: 24,
+            viscosity: 0.35,
+            ..Default::default()
+        };
+        let thin = simulate_liquid(&domain, &sources, &water, &[]);
+        let thick = simulate_liquid(&domain, &sources, &syrup, &[]);
+        assert!(thick.stats.max_speed < thin.stats.max_speed);
+    }
+
+    #[test]
+    fn floor_collider_keeps_particles_above_ground() {
+        let domain = LiquidDomainInput {
+            resolution: 14,
+            bounds_min: Vec3::new(-3.5, 0.0, -3.5),
+            bounds_max: Vec3::new(3.5, 6.0, 3.5),
+            initial_particles: 400,
+            particle_radius: 0.1,
+            ..Default::default()
+        };
+        let sources = vec![LiquidSourceInput {
+            position: Vec3::new(0.0, 3.0, 0.0),
+            emission_rate: 8.0,
+            velocity: Vec3::new(0.0, -5.0, 0.0),
+            ..Default::default()
+        }];
+        let floor = ColliderInput::floor(0.35, 3.5);
+        let solver = LiquidSolverInput {
+            steps: 30,
+            frame_stride: 30,
+            ..Default::default()
+        };
+        let vol = simulate_liquid(&domain, &sources, &solver, &[floor]);
+        let frame = vol.frames.last().expect("frame");
+        let count = frame.particle_count as usize;
+        for i in 0..count {
+            let x = frame.positions[i * 3];
+            let y = frame.positions[i * 3 + 1];
+            let z = frame.positions[i * 3 + 2];
+            if x.abs() > 3.4 || z.abs() > 3.4 {
+                continue;
+            }
+            assert!(y >= 0.35, "particle below floor collider: {y}");
+        }
     }
 }
