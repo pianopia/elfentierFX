@@ -126,6 +126,28 @@ export interface CookResult {
   smoke_steps?: number | null;
   smoke_frame_count?: number | null;
   smoke_particle_count?: number | null;
+  native_viewport?: boolean | null;
+}
+
+export interface NativeViewportCamera {
+  eye: [number, number, number];
+  target: [number, number, number];
+  up: [number, number, number];
+  fov_y_deg: number;
+}
+
+export interface NativePreviewImage {
+  width: number;
+  height: number;
+  rgba: number[];
+  backend: string;
+}
+
+export interface CookWithMeshResult {
+  stats: CookResult;
+  mesh: ViewportMesh;
+  native_preview?: NativePreviewImage | null;
+  native_camera?: NativeViewportCamera | null;
 }
 
 export interface ViewportMesh {
@@ -138,11 +160,6 @@ export interface ViewportMesh {
   instance_count: number;
   graph_name: string;
   smoke?: ViewportSmoke | null;
-}
-
-export interface CookWithMeshResult {
-  stats: CookResult;
-  mesh: ViewportMesh;
 }
 
 export interface ExportResult {

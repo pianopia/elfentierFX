@@ -6,6 +6,8 @@ import type {
   CookWithMeshResult,
   ExportResult,
   Graph,
+  NativePreviewImage,
+  NativeViewportCamera,
   PresetInfo,
   SetSmokeParamsRequest,
   SmokeExportResult,
@@ -35,6 +37,23 @@ export const agentApi = {
     invoke<Graph>("set_smoke_params_command", { request }),
 
   cook: (graph: Graph) => invoke<CookWithMeshResult>("cook", { graph }),
+
+  renderNativeViewport: (
+    mesh: ViewportMesh,
+    smokeFrame: number,
+    width: number,
+    height: number,
+    camera: NativeViewportCamera,
+  ) =>
+    invoke<NativePreviewImage>("render_native_viewport_command", {
+      request: {
+        mesh,
+        smoke_frame: smokeFrame,
+        width,
+        height,
+        camera,
+      },
+    }),
 
   cookStats: (graph: Graph) => invoke<CookResult>("cook_city_graph", { graph }),
 

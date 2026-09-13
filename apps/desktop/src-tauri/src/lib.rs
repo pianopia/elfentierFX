@@ -1,3 +1,5 @@
+mod wgpu_viewport;
+
 use elfentier_core::{
     agent::{
         export_smoke_density, get_preset, list_presets, set_params, set_smoke_params, PresetInfo,
@@ -13,6 +15,9 @@ use elfentier_core::{
     MeshStats,
 };
 use serde::{Deserialize, Serialize};
+use wgpu_viewport::{
+    default_camera_for_mesh, render_native_viewport, NativePreviewImage, NativeViewportCamera,
+};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct CookResult {
@@ -26,12 +31,24 @@ struct CookResult {
     smoke_steps: Option<u32>,
     smoke_frame_count: Option<u32>,
     smoke_particle_count: Option<u32>,
+    native_viewport: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct CookWithMeshResult {
     stats: CookResult,
     mesh: ViewportMesh,
+    native_preview: Option<NativePreviewImage>,
+    native_camera: Option<NativeViewportCamera>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct RenderNativeRequest {
+    mesh: ViewportMesh,
+    smoke_frame: u32,
+    width: u32,
+    height: u32,
+    camera: NativeViewportCamera,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -104,20 +121,36 @@ fn set_smoke_params_command(request: SetSmokeParamsRequest) -> Graph {
 #[tauri::command]
 fn cook_city_graph(graph: Graph) -> Result<CookResult, String> {
     let result = cook_graph(&graph)?;
-    Ok(map_cook_result(result))
+    Ok(map_cook_result(result, false))
 }
 
 #[tauri::command]
 fn cook(graph: Graph) -> Result<CookWithMeshResult, String> {
     let stats = cook_graph(&graph)?;
     let mesh = cook_viewport_mesh(&graph)?;
+    let camera = default_camera_for_mesh(&mesh);
+    let native_preview = render_native_viewport(&mesh, 0, 960, 720, &camera).ok();
+    let native_viewport = native_preview.is_some();
     Ok(CookWithMeshResult {
-        stats: map_cook_result(stats),
+        stats: map_cook_result(stats, native_viewport),
         mesh,
+        native_preview,
+        native_camera: Some(camera),
     })
 }
 
-fn map_cook_result(result: elfentier_core::graph::CookResult) -> CookResult {
+#[tauri::command]
+fn render_native_viewport_command(request: RenderNativeRequest) -> Result<NativePreviewImage, String> {
+    render_native_viewport(
+        &request.mesh,
+        request.smoke_frame,
+        request.width,
+        request.height,
+        &request.camera,
+    )
+}
+
+fn map_cook_result(result: elfentier_core::graph::CookResult, native_viewport: bool) -> CookResult {
     CookResult {
         vertex_count: result.vertex_count,
         index_count: result.index_count,
@@ -129,6 +162,7 @@ fn map_cook_result(result: elfentier_core::graph::CookResult) -> CookResult {
         smoke_steps: result.smoke_steps,
         smoke_frame_count: result.smoke_frame_count,
         smoke_particle_count: result.smoke_particle_count,
+        native_viewport,
     }
 }
 
@@ -183,6 +217,7 @@ pub fn run() {
             set_smoke_params_command,
             cook_city_graph,
             cook,
+            render_native_viewport_command,
             export_city_graph,
             export_gltf,
             export_smoke_density_command,

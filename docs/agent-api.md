@@ -14,7 +14,8 @@ JSON-serializable Tauri commands for external agents and the desktop UI. All com
 | `get_smoke_puff_preset` | — | `Graph` | Smoke/gas puff starter graph |
 | `set_params_command` | `{ request: { graph, node_id?, params } }` | `Graph` | Update `BuildingParams` on a node |
 | `set_smoke_params_command` | `{ request: SetSmokeParamsRequest }` | `Graph` | Update smoke domain/source/solver nodes |
-| `cook` | `{ graph }` | `CookWithMeshResult` | Cook graph + viewport mesh/smoke buffers |
+| `cook` | `{ graph }` | `CookWithMeshResult` | Cook graph + viewport buffers + native wgpu preview |
+| `render_native_viewport_command` | `{ request: RenderNativeRequest }` | `NativePreviewImage` | Re-render mesh/smoke frame with camera (orbit/animation) |
 | `cook_city_graph` | `{ graph }` | `CookResult` | Stats only (legacy) |
 | `export_gltf` | `{ graph, path }` | `ExportResult` | Export merged city `.glb` |
 | `export_smoke_density_command` | `{ request: { graph, path } }` | `SmokeExportResult` | Export smoke density atlas stub |

@@ -49,3 +49,22 @@
   color: #6b7385;
   font-size: 0.85rem;
 }
+
+.viewport3d-native {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at 50% 35%, #151820 0%, #0a0c10 70%);
+}
+
+.viewport3d-native-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  touch-action: none;
+}
+
+.viewport3d-native-canvas:active {
+  cursor: grabbing;
+}
