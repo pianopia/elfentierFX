@@ -1,9 +1,11 @@
 //! Host-facing buffer types for mesh and volume data.
 
+use serde::{Deserialize, Serialize};
+
 /// A typed byte buffer owned by the core.
 ///
 /// Alpha 0 stub — actual allocation and FFI handoff come in later milestones.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Buffer {
     pub label: String,
     pub byte_len: usize,

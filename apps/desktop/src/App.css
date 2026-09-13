@@ -104,3 +104,20 @@
 .action-button:active {
   transform: translateY(1px);
 }
+
+.action-button.secondary {
+  border-color: rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.06);
+  color: #c5ccd8;
+}
+
+.action-button.secondary:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.export-path {
+  font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+  color: #7ee8a2;
+  font-size: 0.72rem;
+}
