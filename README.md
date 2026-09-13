@@ -9,14 +9,13 @@ Unity-oriented procedural DCC for game-ready advanced looks — node-based model
 | Layer | Technology |
 |-------|------------|
 | UI shell | Tauri 2 + React / Vite (React Flow node editor) |
-| 3D viewport | **Native Rust `wgpu`** offscreen renderer (Vulkan/Metal/DX12) → canvas preview |
-| Viewport fallback | Three.js WebGPURenderer / WebGL when wgpu preview unavailable |
+| 3D viewport | **Native Rust `wgpu` only** — offscreen renderer (Vulkan/Metal/DX12) → canvas preview |
 | Core | Rust crate (`elfentier_core`); C++/OpenVDB via FFI later |
 | Platforms | macOS, Windows, Linux |
 
 ### Viewport architecture
 
-Realtime mesh and smoke display target **native OS graphics** via `wgpu`, not the WebView as the performance path. The Tauri webview keeps React Flow and the prompt bar; cooked geometry is rendered in Rust (`apps/desktop/src-tauri/src/wgpu_viewport.rs`) and returned as RGBA for a canvas preview. Drag-to-orbit re-invokes the native renderer with an updated camera. Three.js remains as a temporary fallback.
+Realtime mesh and smoke display use **native OS graphics only** via `wgpu`, not the WebView as the performance path. The Tauri webview keeps React Flow and the prompt bar; cooked geometry is rendered in Rust (`apps/desktop/src-tauri/src/wgpu_viewport.rs`) and returned as RGBA for a canvas preview. Drag-to-orbit re-invokes the native renderer with an updated camera. If wgpu init or render fails, the viewport shows an explicit error panel (no WebGL/Three.js fallback).
 
 ## Repository layout
 

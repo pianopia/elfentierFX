@@ -148,6 +148,7 @@ export interface CookWithMeshResult {
   mesh: ViewportMesh;
   native_preview?: NativePreviewImage | null;
   native_camera?: NativeViewportCamera | null;
+  native_preview_error?: string | null;
 }
 
 export interface ViewportMesh {

@@ -5,14 +5,13 @@ import type {
   NativeViewportCamera,
   ViewportMesh,
 } from "../types/graph";
-import ThreeViewportFallback from "./ThreeViewportFallback";
 import "./Viewport3D.css";
 
 interface Viewport3DProps {
   mesh: ViewportMesh | null;
   nativePreview?: NativePreviewImage | null;
   nativeCamera?: NativeViewportCamera | null;
-  useNativeViewport?: boolean;
+  initialError?: string | null;
 }
 
 interface ViewportStats {
@@ -20,6 +19,20 @@ interface ViewportStats {
   particles: number;
   smokeFrame: number;
   backend: string;
+}
+
+function ViewportErrorPanel({ message }: { message: string }) {
+  return (
+    <div className="viewport3d-error">
+      <p className="viewport3d-error-title">
+        ネイティブ GPU ビューポートを起動できません
+      </p>
+      <p className="viewport3d-error-title-en">
+        Native GPU viewport could not start
+      </p>
+      <pre className="viewport3d-error-detail">{message}</pre>
+    </div>
+  );
 }
 
 function drawPreview(canvas: HTMLCanvasElement, preview: NativePreviewImage) {
@@ -60,7 +73,7 @@ export default function Viewport3D({
   mesh,
   nativePreview,
   nativeCamera,
-  useNativeViewport = false,
+  initialError = null,
 }: Viewport3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -75,9 +88,15 @@ export default function Viewport3D({
     smokeFrame: 0,
     backend: "wgpu",
   });
-  const [renderError, setRenderError] = useState(false);
+  const [viewportError, setViewportError] = useState<string | null>(initialError);
 
-  const nativeActive = useNativeViewport && !renderError && !!mesh;
+  const canRender = !!mesh && !viewportError;
+
+  const reportRenderError = useCallback((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("Native wgpu viewport render failed:", message);
+    setViewportError(message);
+  }, []);
 
   const renderFrame = useCallback(
     async (frameIndex: number, camera: NativeViewportCamera) => {
@@ -107,14 +126,18 @@ export default function Viewport3D({
             currentMesh.smoke?.frames[0]?.particle_count ??
             0,
         }));
-      } catch {
-        setRenderError(true);
+      } catch (error) {
+        reportRenderError(error);
       } finally {
         renderPendingRef.current = false;
       }
     },
-    [],
+    [reportRenderError],
   );
+
+  useEffect(() => {
+    setViewportError(initialError);
+  }, [initialError, mesh]);
 
   useEffect(() => {
     meshRef.current = mesh;
@@ -122,7 +145,7 @@ export default function Viewport3D({
     if (nativeCamera) {
       cameraRef.current = nativeCamera;
     }
-    if (!nativeActive || !mesh) return;
+    if (!canRender || !mesh) return;
 
     if (nativePreview && canvasRef.current) {
       drawPreview(canvasRef.current, nativePreview);
@@ -134,10 +157,10 @@ export default function Viewport3D({
     } else if (cameraRef.current) {
       void renderFrame(0, cameraRef.current);
     }
-  }, [mesh, nativePreview, nativeCamera, nativeActive, renderFrame]);
+  }, [mesh, nativePreview, nativeCamera, canRender, renderFrame]);
 
   useEffect(() => {
-    if (!nativeActive || !mesh?.smoke || mesh.smoke.frame_count <= 1) return undefined;
+    if (!canRender || !mesh?.smoke || mesh.smoke.frame_count <= 1) return undefined;
     const fps = mesh.smoke.fps || 12;
     const interval = window.setInterval(() => {
       smokeFrameRef.current = (smokeFrameRef.current + 1) % mesh.smoke!.frame_count;
@@ -147,10 +170,10 @@ export default function Viewport3D({
       }
     }, 1000 / fps);
     return () => window.clearInterval(interval);
-  }, [mesh, nativeActive, renderFrame]);
+  }, [mesh, canRender, renderFrame]);
 
   useEffect(() => {
-    if (!nativeActive) return undefined;
+    if (!canRender) return undefined;
     const canvas = canvasRef.current;
     if (!canvas) return undefined;
 
@@ -183,29 +206,37 @@ export default function Viewport3D({
       canvas.removeEventListener("pointerup", onPointerUp);
       canvas.removeEventListener("pointerleave", onPointerUp);
     };
-  }, [nativeActive, renderFrame]);
-
-  if (!nativeActive) {
-    return <ThreeViewportFallback mesh={mesh} />;
-  }
+  }, [canRender, renderFrame]);
 
   return (
     <div className="viewport3d">
       <div className="viewport3d-chrome">
         <span className="viewport3d-title">3D View</span>
-        <span className="viewport3d-stat">
-          native {stats.backend} · drag to orbit
-        </span>
-        <span className="viewport3d-stat">
-          {stats.particles > 0 && `${stats.particles} smoke · `}
-          {stats.smokeFrame > 0 && `f${stats.smokeFrame} · `}
-          wgpu preview
-        </span>
+        {viewportError ? (
+          <span className="viewport3d-stat viewport3d-stat-error">wgpu error</span>
+        ) : (
+          <>
+            <span className="viewport3d-stat">
+              native {stats.backend} · drag to orbit
+            </span>
+            <span className="viewport3d-stat">
+              {stats.particles > 0 && `${stats.particles} smoke · `}
+              {stats.smokeFrame > 0 && `f${stats.smokeFrame} · `}
+              wgpu preview
+            </span>
+          </>
+        )}
       </div>
       <div className="viewport3d-canvas viewport3d-native" ref={containerRef}>
-        <canvas ref={canvasRef} className="viewport3d-native-canvas" />
-        {!mesh && (
-          <div className="viewport3d-empty">Cook to preview via native wgpu</div>
+        {viewportError ? (
+          <ViewportErrorPanel message={viewportError} />
+        ) : (
+          <>
+            <canvas ref={canvasRef} className="viewport3d-native-canvas" />
+            {!mesh && (
+              <div className="viewport3d-empty">Cook to preview via native wgpu</div>
+            )}
+          </>
         )}
       </div>
     </div>

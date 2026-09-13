@@ -40,6 +40,7 @@ struct CookWithMeshResult {
     mesh: ViewportMesh,
     native_preview: Option<NativePreviewImage>,
     native_camera: Option<NativeViewportCamera>,
+    native_preview_error: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -129,13 +130,21 @@ fn cook(graph: Graph) -> Result<CookWithMeshResult, String> {
     let stats = cook_graph(&graph)?;
     let mesh = cook_viewport_mesh(&graph)?;
     let camera = default_camera_for_mesh(&mesh);
-    let native_preview = render_native_viewport(&mesh, 0, 960, 720, &camera).ok();
+    let (native_preview, native_preview_error) =
+        match render_native_viewport(&mesh, 0, 960, 720, &camera) {
+            Ok(preview) => (Some(preview), None),
+            Err(err) => {
+                eprintln!("native viewport preview failed: {err}");
+                (None, Some(err))
+            }
+        };
     let native_viewport = native_preview.is_some();
     Ok(CookWithMeshResult {
         stats: map_cook_result(stats, native_viewport),
         mesh,
         native_preview,
         native_camera: Some(camera),
+        native_preview_error,
     })
 }
 
