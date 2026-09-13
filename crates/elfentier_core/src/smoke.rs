@@ -1,4 +1,4 @@
-//! Lightweight Eulerian smoke/gas solver (pure Rust, no OpenVDB).
+//! Lightweight Eulerian smoke/gas solver (pure Rust). OpenVDB export via `openvdb_io`.
 
 use crate::mesh::Vec3;
 use serde::{Deserialize, Serialize};

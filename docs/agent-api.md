@@ -22,7 +22,8 @@ JSON-serializable Tauri commands for external agents and the desktop UI. All com
 | `render_native_viewport_command` | `{ request: RenderNativeRequest }` | `NativePreviewImage` | Re-render mesh/smoke/liquid frame with camera (orbit/animation) |
 | `cook_city_graph` | `{ graph }` | `CookResult` | Stats only (legacy) |
 | `export_gltf` | `{ graph, path }` | `ExportResult` | Export merged city `.glb` |
-| `export_smoke_density_command` | `{ request: { graph, path } }` | `SmokeExportResult` | Export smoke density atlas stub |
+| `export_smoke_density_command` | `{ request: { graph, path } }` | `SmokeExportResult` | Export smoke density XY atlas |
+| `export_smoke_vdb_command` | `{ request: { graph, path } }` | `OpenVdbExportResult` | Export smoke fog `.vdb` (last frame) |
 | `export_liquid_cache_command` | `{ request: { graph, path } }` | `LiquidExportResult` | Export liquid particle cache stub |
 | `export_cook_bundle_command_handler` | `{ request: { graph, path? } }` | `ExportBundleResult` | Write manifest + payloads directory (temp path if `path` omitted) |
 | `apply_prompt_command` | `{ request: { graph, prompt } }` | `ApplyPromptResult` | Local NL → graph edits |
@@ -202,7 +203,7 @@ Export (`export_gltf`) writes a **merged** mesh for city graphs only.
 
 ## Smoke density export (`export_smoke_density_command`)
 
-Unity-oriented stub: writes a small header plus raw `f32` density atlas bytes.
+Writes a small header plus raw `f32` density atlas bytes.
 
 ```json
 {
@@ -214,6 +215,24 @@ Unity-oriented stub: writes a small header plus raw `f32` density atlas bytes.
 ```
 
 Format: text header (`# elfentier smoke density atlas v1`) followed by little-endian `f32` data (XY slices, frame-major). Suitable for flipbook or 3D texture import in Unity.
+
+## OpenVDB fog export (`export_smoke_vdb_command`)
+
+Writes a standard OpenVDB `.vdb` archive with a `density` FloatGrid (fog volume class) from the latest smoke density frame.
+
+```json
+{
+  "path": "/tmp/smoke_density.vdb",
+  "grid_name": "density",
+  "frame_index": 12,
+  "byte_len": 68658,
+  "format": "openvdb_fog_floatgrid_v1",
+  "active_voxels": 5439,
+  "resolution": [24, 24, 24]
+}
+```
+
+Smoke export bundles also include `smoke_density.vdb` automatically. OpenVDB is a trademark of LF Projects, LLC.
 
 ## Liquid particle cache export (`export_liquid_cache_command`)
 
@@ -322,5 +341,5 @@ Response shape:
 ## Future
 
 - MCP server wrapping these commands (not implemented in Alpha 2).
-- OpenVDB volume I/O for dense fields.
+- Multi-frame OpenVDB sequences and liquid → VDB.
 - Optional cloud LLM backend behind `apply_prompt` (stub only; no keys required today).

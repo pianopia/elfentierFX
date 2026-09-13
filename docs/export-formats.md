@@ -11,6 +11,7 @@ my_export/
   city_mesh.glb          # city graphs only
   smoke_density.raw      # smoke graphs only (XY atlas)
   volume_texture.evol    # smoke graphs only (3D Texture3D path)
+  smoke_density.vdb      # smoke graphs only (OpenVDB fog FloatGrid, last frame)
   liquid_cache.raw       # liquid graphs only
 ```
 
@@ -124,18 +125,38 @@ JSON graph document (`graph.json`) included in every bundle for reproducibility 
 | Unreal Engine | `integrations/unreal/ElfentierFX/` | Plugin skeleton + README import notes |
 | Blender 4.x | `integrations/blender/elfentier_fx/` | **Import ElfentierFX Bundle** operator |
 
+## OpenVDB fog volume (`openvdb_fog_floatgrid_v1`)
+
+Standard OpenVDB `.vdb` archive containing a `Tree_float_5_4_3` FloatGrid named `density` with class **fog volume**.
+
+| Property | Value |
+|----------|-------|
+| Extension | `.vdb` |
+| Grid name | `density` |
+| Value type | `float` (scalar density) |
+| Compression | Active-mask, uncompressed (readable by `vdb-rs` and standard OpenVDB tools) |
+| Frame | Last smoke density frame in the bundle |
+| Units | Meters via `ScaleTranslateMap` transform |
+
+- Smoke graphs only (`smoke_density.vdb` in bundles)
+- Readable in Houdini, Blender (OpenVDB), `vdb-rs`, and other OpenVDB-compatible viewers
+- Unity: native `.vdb` is not imported by the in-repo ElfentierFX bundle plugin; use external tools or emit `.evol` for **[Unity Volume Importer](https://github.com/pianopia/UnityVolumeImporter)** (`com.louddin.unity-volume-importer`)
+
+OpenVDB is a trademark of LF Projects, LLC.
+
 ## CLI converter (`tools/vdb_convert`)
 
 ```bash
 cargo run -p vdb_convert -- from-smoke-preset /tmp/smoke.evol
-cargo run -p vdb_convert -- info /tmp/smoke.evol
+cargo run -p vdb_convert -- to-vdb /tmp/smoke.vdb --from-preset
+cargo run -p vdb_convert -- info /tmp/smoke.vdb
+cargo run -p vdb_convert -- from-vdb /tmp/smoke.vdb /tmp/smoke.evol
 ```
 
-`from-vdb` is a Phase 1 stub — native OpenVDB read will emit `.evol` in a later milestone. OpenVDB is a trademark of LF Projects, LLC.
+## Future (out of scope for Alpha 2 spike)
 
-## Future (out of scope for Phase 1)
-
-- Native `.vdb` / NanoVDB read in `vdb_convert` (emit `.evol`)
+- Multi-frame `.vdb` sequences (one grid per frame in a single archive)
+- Liquid → VDB (level-set / fog from FLIP particles)
 - Live TCP bridge to running editors (interface stub comments only)
 - Full Niagara graph authoring
 - USD pipeline

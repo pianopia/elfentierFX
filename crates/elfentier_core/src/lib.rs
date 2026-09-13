@@ -10,6 +10,7 @@ pub mod export;
 pub mod graph;
 pub mod liquid;
 pub mod mesh;
+pub mod openvdb_io;
 pub mod placement;
 pub mod prompt;
 pub mod smoke;

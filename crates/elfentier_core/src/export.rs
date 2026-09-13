@@ -7,6 +7,7 @@ use crate::graph::{
 use crate::liquid::export_particle_cache;
 use crate::mesh::Mesh;
 use crate::smoke::export_density_atlas;
+use crate::openvdb_io::{export_openvdb_fog, OPENVDB_FOG_FORMAT, VDB_EXTENSION};
 use crate::volume_texture::{export_volume_texture, VOLUME_TEXTURE_FORMAT};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
@@ -281,6 +282,22 @@ pub fn export_cook_bundle(graph: &Graph, path: Option<&str>) -> Result<ExportBun
                 bounds_max: Some(vec3_to_array(volume.bounds_max)),
                 resolution: Some(volume_result.resolution),
             });
+
+            let vdb_path = dir.join(format!("smoke_density.{VDB_EXTENSION}"));
+            let vdb_path_str = vdb_path.to_string_lossy().to_string();
+            let vdb_result =
+                export_openvdb_fog(&volume, &vdb_path_str).map_err(|e| e.to_string())?;
+            payloads.push(ExportPayloadEntry {
+                format: OPENVDB_FOG_FORMAT.into(),
+                path: format!("smoke_density.{VDB_EXTENSION}"),
+                frame_count: Some(vdb_result.frame_index + 1),
+                byte_len: Some(vdb_result.byte_len),
+                vertex_count: None,
+                triangle_count: None,
+                bounds_min: Some(vec3_to_array(volume.bounds_min)),
+                bounds_max: Some(vec3_to_array(volume.bounds_max)),
+                resolution: Some(vdb_result.resolution),
+            });
         }
         GraphMode::Liquid => {
             let volume = evaluate_liquid_volume(graph)?;
@@ -427,6 +444,11 @@ mod tests {
             .any(|p| p.format == VOLUME_TEXTURE_FORMAT));
         assert!(dir.join("smoke_density.raw").exists());
         assert!(dir.join("volume_texture.evol").exists());
+        assert!(dir.join("smoke_density.vdb").exists());
+        assert!(manifest
+            .payloads
+            .iter()
+            .any(|p| p.format == OPENVDB_FOG_FORMAT));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
