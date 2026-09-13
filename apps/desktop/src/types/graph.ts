@@ -8,7 +8,11 @@ export type NodeKind =
   | "smoke_domain"
   | "smoke_source"
   | "smoke_solver"
-  | "smoke_root";
+  | "smoke_root"
+  | "liquid_domain"
+  | "liquid_source"
+  | "liquid_solver"
+  | "liquid_root";
 
 export interface Vec3 {
   x: number;
@@ -67,6 +71,36 @@ export interface SmokeSolverInput {
   max_particles_per_frame: number;
 }
 
+export interface LiquidDomainInput {
+  resolution: number;
+  bounds_min: Vec3;
+  bounds_max: Vec3;
+  seed: number;
+  initial_particles: number;
+  particle_radius: number;
+}
+
+export interface LiquidSourceInput {
+  position: Vec3;
+  radius: number;
+  emission_rate: number;
+  velocity: Vec3;
+  active_until_step: number;
+}
+
+export interface LiquidSolverInput {
+  steps: number;
+  frame_stride: number;
+  gravity: number;
+  flip_ratio: number;
+  viscosity: number;
+  pressure_iterations: number;
+  wave_amplitude: number;
+  wave_frequency: number;
+  terrain_height: number;
+  max_particles: number;
+}
+
 export interface GraphNode {
   id: string;
   kind: NodeKind;
@@ -77,6 +111,9 @@ export interface GraphNode {
   smoke_domain?: SmokeDomainInput | null;
   smoke_source?: SmokeSourceInput | null;
   smoke_solver?: SmokeSolverInput | null;
+  liquid_domain?: LiquidDomainInput | null;
+  liquid_source?: LiquidSourceInput | null;
+  liquid_solver?: LiquidSolverInput | null;
 }
 
 export interface GraphEdge {
@@ -115,6 +152,30 @@ export interface ViewportSmoke {
   stats: SmokeStats;
 }
 
+export interface LiquidStats {
+  resolution: [number, number, number];
+  step_count: number;
+  frame_count: number;
+  particle_count: number;
+  max_speed: number;
+}
+
+export interface ViewportLiquidFrame {
+  positions: number[];
+  radii: number[];
+  opacities: number[];
+  particle_count: number;
+}
+
+export interface ViewportLiquid {
+  frames: ViewportLiquidFrame[];
+  bounds_min: [number, number, number];
+  bounds_max: [number, number, number];
+  frame_count: number;
+  fps: number;
+  stats: LiquidStats;
+}
+
 export interface CookResult {
   vertex_count: number;
   index_count: number;
@@ -126,6 +187,11 @@ export interface CookResult {
   smoke_steps?: number | null;
   smoke_frame_count?: number | null;
   smoke_particle_count?: number | null;
+  liquid_resolution?: [number, number, number] | null;
+  liquid_steps?: number | null;
+  liquid_frame_count?: number | null;
+  liquid_particle_count?: number | null;
+  liquid_max_speed?: number | null;
   native_viewport?: boolean | null;
 }
 
@@ -161,6 +227,7 @@ export interface ViewportMesh {
   instance_count: number;
   graph_name: string;
   smoke?: ViewportSmoke | null;
+  liquid?: ViewportLiquid | null;
 }
 
 export interface ExportResult {
@@ -177,6 +244,13 @@ export interface SmokeExportResult {
   format: string;
 }
 
+export interface LiquidExportResult {
+  path: string;
+  frame_count: number;
+  byte_len: number;
+  format: string;
+}
+
 export type PlacementMode = "along_path" | "grid";
 
 export type PromptIntent =
@@ -187,6 +261,7 @@ export type PromptIntent =
   | { type: "switch_placement"; mode: PlacementMode }
   | { type: "set_graph_name"; name: string }
   | { type: "increase_smoke"; emission_delta: number; step_delta: number }
+  | { type: "increase_liquid"; emission_delta: number; wave_delta: number; step_delta: number }
   | { type: "unknown"; raw: string };
 
 export type GraphEdit =
@@ -200,6 +275,13 @@ export type GraphEdit =
       source: SmokeSourceInput;
       solver_node_id: string;
       solver: SmokeSolverInput;
+    }
+  | {
+      type: "set_liquid_params";
+      source_node_id: string;
+      source: LiquidSourceInput;
+      solver_node_id: string;
+      solver: LiquidSolverInput;
     };
 
 export interface ApplyPromptResult {
@@ -222,6 +304,13 @@ export interface SetSmokeParamsRequest {
   solver?: SmokeSolverInput | null;
 }
 
+export interface SetLiquidParamsRequest {
+  graph: Graph;
+  domain?: LiquidDomainInput | null;
+  source?: LiquidSourceInput | null;
+  solver?: LiquidSolverInput | null;
+}
+
 export const NODE_KIND_LABELS: Record<NodeKind, string> = {
   building_params: "Building Params",
   building_mesh: "Building Mesh",
@@ -233,6 +322,10 @@ export const NODE_KIND_LABELS: Record<NodeKind, string> = {
   smoke_source: "Smoke Source",
   smoke_solver: "Smoke Solver",
   smoke_root: "Smoke Root",
+  liquid_domain: "Liquid Domain",
+  liquid_source: "Liquid Source",
+  liquid_solver: "Liquid Solver",
+  liquid_root: "Liquid Surface",
 };
 
 export const NODE_KIND_COLORS: Record<NodeKind, string> = {
@@ -246,4 +339,8 @@ export const NODE_KIND_COLORS: Record<NodeKind, string> = {
   smoke_source: "#ffd166",
   smoke_solver: "#b8f2e6",
   smoke_root: "#f5f5f5",
+  liquid_domain: "#5ec8e8",
+  liquid_source: "#4da6ff",
+  liquid_solver: "#7ad4f0",
+  liquid_root: "#e8f8ff",
 };

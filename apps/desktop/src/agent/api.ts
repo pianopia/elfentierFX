@@ -9,6 +9,8 @@ import type {
   NativePreviewImage,
   NativeViewportCamera,
   PresetInfo,
+  LiquidExportResult,
+  SetLiquidParamsRequest,
   SetSmokeParamsRequest,
   SmokeExportResult,
   ViewportMesh,
@@ -28,6 +30,12 @@ export const agentApi = {
 
   getSmokePuffPreset: () => invoke<Graph>("get_smoke_puff_preset"),
 
+  getOceanPatchPreset: () => invoke<Graph>("get_ocean_patch_preset"),
+
+  getWaterfallPreset: () => invoke<Graph>("get_waterfall_preset"),
+
+  getFloodBasinPreset: () => invoke<Graph>("get_flood_basin_preset"),
+
   setParams: (graph: Graph, params: BuildingParams, nodeId?: string) =>
     invoke<Graph>("set_params_command", {
       request: { graph, node_id: nodeId ?? null, params },
@@ -35,6 +43,9 @@ export const agentApi = {
 
   setSmokeParams: (request: SetSmokeParamsRequest) =>
     invoke<Graph>("set_smoke_params_command", { request }),
+
+  setLiquidParams: (request: SetLiquidParamsRequest) =>
+    invoke<Graph>("set_liquid_params_command", { request }),
 
   cook: (graph: Graph) => invoke<CookWithMeshResult>("cook", { graph }),
 
@@ -62,6 +73,11 @@ export const agentApi = {
 
   exportSmokeDensity: (graph: Graph, path: string) =>
     invoke<SmokeExportResult>("export_smoke_density_command", {
+      request: { graph, path },
+    }),
+
+  exportLiquidCache: (graph: Graph, path: string) =>
+    invoke<LiquidExportResult>("export_liquid_cache_command", {
       request: { graph, path },
     }),
 

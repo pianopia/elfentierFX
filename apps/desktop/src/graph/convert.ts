@@ -13,6 +13,10 @@ const PRESET_LAYOUT: Record<string, { x: number; y: number }> = {
   smoke_source: { x: 280, y: 140 },
   smoke_solver: { x: 520, y: 140 },
   smoke_root: { x: 760, y: 140 },
+  liquid_domain: { x: 40, y: 140 },
+  liquid_source: { x: 280, y: 140 },
+  liquid_solver: { x: 520, y: 140 },
+  liquid_root: { x: 760, y: 140 },
 };
 
 export function graphToFlow(graph: Graph): { nodes: Node[]; edges: Edge[] } {
@@ -58,6 +62,9 @@ export function flowToGraph(
       smoke_domain: null,
       smoke_source: null,
       smoke_solver: null,
+      liquid_domain: null,
+      liquid_source: null,
+      liquid_solver: null,
     };
   });
 
@@ -83,6 +90,9 @@ export function mergePresetInputs(graph: Graph, preset: Graph): Graph {
         smoke_domain: node.smoke_domain ?? presetNode.smoke_domain,
         smoke_source: node.smoke_source ?? presetNode.smoke_source,
         smoke_solver: node.smoke_solver ?? presetNode.smoke_solver,
+        liquid_domain: node.liquid_domain ?? presetNode.liquid_domain,
+        liquid_source: node.liquid_source ?? presetNode.liquid_source,
+        liquid_solver: node.liquid_solver ?? presetNode.liquid_solver,
       };
     }),
   };

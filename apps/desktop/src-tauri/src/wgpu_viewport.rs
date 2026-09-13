@@ -1,6 +1,6 @@
 //! Native wgpu offscreen viewport (Vulkan/Metal/DX12) for mesh + smoke particles.
 
-use elfentier_core::viewport::{ViewportMesh, ViewportSmokeFrame};
+use elfentier_core::viewport::{ViewportLiquidFrame, ViewportMesh, ViewportSmokeFrame};
 use pollster::block_on;
 use serde::{Deserialize, Serialize};
 use wgpu::util::DeviceExt;
@@ -108,6 +108,68 @@ fn fs_main(input: VsOut) -> @location(0) vec4f {
 }
 "#;
 
+const LIQUID_SHADER: &str = r#"
+struct Camera {
+    view_proj: mat4x4f,
+    eye: vec4f,
+    viewport: vec4f,
+}
+
+struct Particle {
+    @location(0) center: vec3f,
+    @location(1) radius: f32,
+    @location(2) opacity: f32,
+}
+
+struct VsOut {
+    @builtin(position) clip: vec4f,
+    @location(0) uv: vec2f,
+    @location(1) opacity: f32,
+}
+
+@group(0) @binding(0) var<uniform> camera: Camera;
+
+@vertex
+fn vs_main(particle: Particle, @builtin(vertex_index) vid: u32) -> VsOut {
+    let corners = array(
+        vec2f(-1.0, -1.0),
+        vec2f( 1.0, -1.0),
+        vec2f(-1.0,  1.0),
+        vec2f( 1.0, -1.0),
+        vec2f( 1.0,  1.0),
+        vec2f(-1.0,  1.0),
+    );
+    let uv = corners[vid];
+    let to_particle = particle.center - camera.eye.xyz;
+    var right = normalize(cross(vec3f(0.0, 1.0, 0.0), normalize(to_particle)));
+    if (length(right) < 0.001) {
+        right = vec3f(1.0, 0.0, 0.0);
+    }
+    let up = cross(normalize(to_particle), right);
+    let radius = particle.radius * (0.7 + 0.3 * particle.opacity);
+    let offset = right * uv.x * radius + up * uv.y * radius;
+    let world = particle.center + offset;
+    var out: VsOut;
+    out.clip = camera.view_proj * vec4f(world, 1.0);
+    out.uv = uv;
+    out.opacity = particle.opacity * 0.75;
+    return out;
+}
+
+@fragment
+fn fs_main(input: VsOut) -> @location(0) vec4f {
+    let r = length(input.uv);
+    if (r > 1.0) {
+        discard;
+    }
+    let falloff = pow(1.0 - r, 2.5);
+    let deep = vec3f(0.08, 0.28, 0.62);
+    let foam = vec3f(0.45, 0.72, 0.95);
+    let col = mix(deep, foam, falloff * 0.65 + 0.2);
+    return vec4f(col, input.opacity * falloff);
+}
+"#;
+
 const GRID_SHADER: &str = r#"
 struct Camera {
     view_proj: mat4x4f,
@@ -189,6 +251,15 @@ struct SmokeParticle {
     _pad: f32,
 }
 
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct LiquidParticle {
+    center: [f32; 3],
+    radius: f32,
+    opacity: f32,
+    _pad: f32,
+}
+
 /// Default camera fitted to a cooked viewport payload.
 pub fn default_camera_for_mesh(mesh: &ViewportMesh) -> NativeViewportCamera {
     let (min, max) = bounds_for_mesh(mesh);
@@ -259,6 +330,13 @@ fn bounds_for_mesh(mesh: &ViewportMesh) -> ([f32; 3], [f32; 3]) {
         for axis in 0..3 {
             min[axis] = min[axis].min(smoke.bounds_min[axis]);
             max[axis] = max[axis].max(smoke.bounds_max[axis]);
+        }
+    }
+
+    if let Some(liquid) = &mesh.liquid {
+        for axis in 0..3 {
+            min[axis] = min[axis].min(liquid.bounds_min[axis]);
+            max[axis] = max[axis].max(liquid.bounds_max[axis]);
         }
     }
 
@@ -455,6 +533,22 @@ fn mul4(a: [[f32; 4]; 4], b: [[f32; 4]; 4]) -> [[f32; 4]; 4] {
     out
 }
 
+fn pack_liquid_particles(frame: &ViewportLiquidFrame) -> Vec<LiquidParticle> {
+    let count = frame.particle_count as usize;
+    (0..count)
+        .map(|i| LiquidParticle {
+            center: [
+                frame.positions[i * 3],
+                frame.positions[i * 3 + 1],
+                frame.positions[i * 3 + 2],
+            ],
+            radius: frame.radii.get(i).copied().unwrap_or(0.12),
+            opacity: frame.opacities.get(i).copied().unwrap_or(0.7),
+            _pad: 0.0,
+        })
+        .collect()
+}
+
 fn pack_particles(frame: &ViewportSmokeFrame) -> Vec<SmokeParticle> {
     let count = frame.particle_count as usize;
     (0..count)
@@ -567,6 +661,10 @@ async fn render_wgpu(
     let smoke_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("smoke shader"),
         source: wgpu::ShaderSource::Wgsl(SMOKE_SHADER.into()),
+    });
+    let liquid_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("liquid shader"),
+        source: wgpu::ShaderSource::Wgsl(LIQUID_SHADER.into()),
     });
     let grid_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("grid shader"),
@@ -725,6 +823,58 @@ async fn render_wgpu(
         cache: None,
     });
 
+    let liquid_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("liquid pipeline"),
+        layout: Some(&mesh_pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &liquid_shader,
+            entry_point: Some("vs_main"),
+            buffers: &[wgpu::VertexBufferLayout {
+                array_stride: std::mem::size_of::<LiquidParticle>() as u64,
+                step_mode: wgpu::VertexStepMode::Instance,
+                attributes: &[
+                    wgpu::VertexAttribute {
+                        format: wgpu::VertexFormat::Float32x3,
+                        offset: 0,
+                        shader_location: 0,
+                    },
+                    wgpu::VertexAttribute {
+                        format: wgpu::VertexFormat::Float32,
+                        offset: 12,
+                        shader_location: 1,
+                    },
+                    wgpu::VertexAttribute {
+                        format: wgpu::VertexFormat::Float32,
+                        offset: 16,
+                        shader_location: 2,
+                    },
+                ],
+            }],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &liquid_shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth32Float,
+            depth_write_enabled: false,
+            depth_compare: wgpu::CompareFunction::LessEqual,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    });
+
     let smoke_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("smoke pipeline"),
         layout: Some(&mesh_pipeline_layout),
@@ -822,6 +972,20 @@ async fn render_wgpu(
         })
     });
 
+    let liquid_particles = mesh
+        .liquid
+        .as_ref()
+        .and_then(|l| l.frames.get(smoke_frame as usize))
+        .map(pack_liquid_particles);
+
+    let liquid_instance_buffer = liquid_particles.as_ref().map(|particles| {
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("liquid particles"),
+            contents: bytemuck::cast_slice(particles),
+            usage: wgpu::BufferUsages::VERTEX,
+        })
+    });
+
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("native viewport encoder"),
     });
@@ -871,6 +1035,16 @@ async fn render_wgpu(
             pass.set_vertex_buffer(0, vb.slice(..));
             pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
             pass.draw_indexed(0..mesh_indices.len() as u32, 0, 0..1);
+        }
+
+        if let (Some(vb), Some(bg)) = (&liquid_instance_buffer, Some(&smoke_bind_group)) {
+            let count = liquid_particles.as_ref().map(|p| p.len()).unwrap_or(0) as u32;
+            if count > 0 {
+                pass.set_pipeline(&liquid_pipeline);
+                pass.set_bind_group(0, bg, &[]);
+                pass.set_vertex_buffer(0, vb.slice(..));
+                pass.draw(0..6, 0..count);
+            }
         }
 
         if let (Some(vb), Some(bg)) = (&smoke_instance_buffer, Some(&smoke_bind_group)) {
@@ -949,6 +1123,13 @@ mod tests {
     #[test]
     fn default_camera_is_finite() {
         let mesh = cook_viewport_mesh(&Graph::smoke_puff_preset()).expect("cook");
+        let cam = default_camera_for_mesh(&mesh);
+        assert!(cam.eye.iter().all(|v| v.is_finite()));
+    }
+
+    #[test]
+    fn default_camera_finite_for_liquid() {
+        let mesh = cook_viewport_mesh(&Graph::ocean_patch_preset()).expect("cook");
         let cam = default_camera_for_mesh(&mesh);
         assert!(cam.eye.iter().all(|v| v.is_finite()));
     }

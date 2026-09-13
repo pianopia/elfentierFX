@@ -2,14 +2,15 @@ mod wgpu_viewport;
 
 use elfentier_core::{
     agent::{
-        export_smoke_density, get_preset, list_presets, set_params, set_smoke_params, PresetInfo,
-        SetSmokeParamsRequest,
+        export_liquid_cache, export_smoke_density, get_preset, list_presets, set_liquid_params,
+        set_params, set_smoke_params, PresetInfo, SetLiquidParamsRequest, SetSmokeParamsRequest,
     },
     building::BuildingParams,
     core_version, create_box_mesh,
     explain::explain_graph,
     graph::{cook_and_export, cook_graph, Graph},
     prompt::{apply_prompt, ApplyPromptResult},
+    liquid::LiquidExportResult,
     smoke::SmokeExportResult,
     viewport::{cook_viewport_mesh, ViewportMesh},
     MeshStats,
@@ -31,6 +32,11 @@ struct CookResult {
     smoke_steps: Option<u32>,
     smoke_frame_count: Option<u32>,
     smoke_particle_count: Option<u32>,
+    liquid_resolution: Option<[u32; 3]>,
+    liquid_steps: Option<u32>,
+    liquid_frame_count: Option<u32>,
+    liquid_particle_count: Option<u32>,
+    liquid_max_speed: Option<f32>,
     native_viewport: bool,
 }
 
@@ -79,6 +85,12 @@ struct ExportSmokeRequest {
     path: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct ExportLiquidRequest {
+    graph: Graph,
+    path: String,
+}
+
 #[tauri::command]
 fn get_core_version() -> String {
     core_version().to_string()
@@ -100,6 +112,21 @@ fn get_smoke_puff_preset() -> Graph {
 }
 
 #[tauri::command]
+fn get_ocean_patch_preset() -> Graph {
+    Graph::ocean_patch_preset()
+}
+
+#[tauri::command]
+fn get_waterfall_preset() -> Graph {
+    Graph::waterfall_preset()
+}
+
+#[tauri::command]
+fn get_flood_basin_preset() -> Graph {
+    Graph::flood_basin_preset()
+}
+
+#[tauri::command]
 fn get_graph(graph: Graph) -> Graph {
     graph
 }
@@ -117,6 +144,11 @@ fn set_params_command(request: SetParamsRequest) -> Graph {
 #[tauri::command]
 fn set_smoke_params_command(request: SetSmokeParamsRequest) -> Graph {
     set_smoke_params(&request)
+}
+
+#[tauri::command]
+fn set_liquid_params_command(request: SetLiquidParamsRequest) -> Graph {
+    set_liquid_params(&request)
 }
 
 #[tauri::command]
@@ -171,6 +203,11 @@ fn map_cook_result(result: elfentier_core::graph::CookResult, native_viewport: b
         smoke_steps: result.smoke_steps,
         smoke_frame_count: result.smoke_frame_count,
         smoke_particle_count: result.smoke_particle_count,
+        liquid_resolution: result.liquid_resolution,
+        liquid_steps: result.liquid_steps,
+        liquid_frame_count: result.liquid_frame_count,
+        liquid_particle_count: result.liquid_particle_count,
+        liquid_max_speed: result.liquid_max_speed,
         native_viewport,
     }
 }
@@ -197,6 +234,11 @@ fn export_smoke_density_command(request: ExportSmokeRequest) -> Result<SmokeExpo
 }
 
 #[tauri::command]
+fn export_liquid_cache_command(request: ExportLiquidRequest) -> Result<LiquidExportResult, String> {
+    export_liquid_cache(&request.graph, &request.path)
+}
+
+#[tauri::command]
 fn apply_prompt_command(request: ApplyPromptRequest) -> Result<ApplyPromptResult, String> {
     Ok(apply_prompt(&request.graph, &request.prompt))
 }
@@ -220,16 +262,21 @@ pub fn run() {
             create_box_mesh_command,
             get_shop_street_preset,
             get_smoke_puff_preset,
+            get_ocean_patch_preset,
+            get_waterfall_preset,
+            get_flood_basin_preset,
             get_graph,
             list_presets_command,
             set_params_command,
             set_smoke_params_command,
+            set_liquid_params_command,
             cook_city_graph,
             cook,
             render_native_viewport_command,
             export_city_graph,
             export_gltf,
             export_smoke_density_command,
+            export_liquid_cache_command,
             apply_prompt_command,
             explain_graph_command,
             load_preset,

@@ -6,6 +6,9 @@ use crate::mesh::{Mesh, Vec3};
 use crate::placement::{
     fill_grid, place_along_path, GridInput, InstanceTransform, PathInput,
 };
+use crate::liquid::{
+    simulate_liquid, LiquidDomainInput, LiquidSolverInput, LiquidSourceInput, LiquidVolume,
+};
 use crate::smoke::{
     simulate_smoke, SmokeDomainInput, SmokeSolverInput, SmokeSourceInput, SmokeVolume,
 };
@@ -30,6 +33,10 @@ pub enum NodeKind {
     SmokeSource,
     SmokeSolver,
     SmokeRoot,
+    LiquidDomain,
+    LiquidSource,
+    LiquidSolver,
+    LiquidRoot,
 }
 
 /// Graph cook mode inferred from the output root node.
@@ -37,11 +44,14 @@ pub enum NodeKind {
 pub enum GraphMode {
     City,
     Smoke,
+    Liquid,
 }
 
 /// Returns the cook mode for a graph document.
 pub fn graph_mode(graph: &Graph) -> GraphMode {
-    if graph.nodes.iter().any(|n| n.kind == NodeKind::SmokeRoot) {
+    if graph.nodes.iter().any(|n| n.kind == NodeKind::LiquidRoot) {
+        GraphMode::Liquid
+    } else if graph.nodes.iter().any(|n| n.kind == NodeKind::SmokeRoot) {
         GraphMode::Smoke
     } else {
         GraphMode::City
@@ -66,6 +76,12 @@ pub struct Node {
     pub smoke_source: Option<SmokeSourceInput>,
     #[serde(default)]
     pub smoke_solver: Option<SmokeSolverInput>,
+    #[serde(default)]
+    pub liquid_domain: Option<LiquidDomainInput>,
+    #[serde(default)]
+    pub liquid_source: Option<LiquidSourceInput>,
+    #[serde(default)]
+    pub liquid_solver: Option<LiquidSolverInput>,
 }
 
 /// Edge connecting an output port to an input port.
@@ -170,6 +186,156 @@ impl Graph {
             ],
         }
     }
+
+    /// Wide ocean surface with gentle wave forcing.
+    pub fn ocean_patch_preset() -> Self {
+        let domain_id = NodeId("liquid_domain".into());
+        let source_id = NodeId("liquid_source".into());
+        let solver_id = NodeId("liquid_solver".into());
+        let root_id = NodeId("liquid_root".into());
+
+        Self {
+            name: "Ocean Patch".into(),
+            nodes: vec![
+                empty_node(domain_id.clone(), NodeKind::LiquidDomain, "Liquid Domain")
+                    .with_liquid_domain(LiquidDomainInput {
+                        resolution: 22,
+                        bounds_min: Vec3::new(-8.0, 0.0, -8.0),
+                        bounds_max: Vec3::new(8.0, 3.5, 8.0),
+                        seed: 21,
+                        initial_particles: 2400,
+                        particle_radius: 0.14,
+                    }),
+                empty_node(source_id.clone(), NodeKind::LiquidSource, "Surface Fill")
+                    .with_liquid_source(LiquidSourceInput {
+                        position: Vec3::new(0.0, 2.8, 0.0),
+                        radius: 7.0,
+                        emission_rate: 0.0,
+                        velocity: Vec3::new(0.0, 0.0, 0.0),
+                        active_until_step: 0,
+                    }),
+                empty_node(solver_id.clone(), NodeKind::LiquidSolver, "Liquid Solver")
+                    .with_liquid_solver(LiquidSolverInput {
+                        steps: 48,
+                        frame_stride: 4,
+                        gravity: 4.5,
+                        flip_ratio: 0.94,
+                        viscosity: 0.04,
+                        pressure_iterations: 18,
+                        wave_amplitude: 0.28,
+                        wave_frequency: 1.1,
+                        terrain_height: 0.0,
+                        max_particles: 12000,
+                    }),
+                empty_node(root_id.clone(), NodeKind::LiquidRoot, "Liquid Surface"),
+            ],
+            edges: vec![
+                Edge { from: domain_id.clone(), to: source_id.clone() },
+                Edge { from: source_id.clone(), to: solver_id.clone() },
+                Edge { from: solver_id.clone(), to: root_id.clone() },
+            ],
+        }
+    }
+
+    /// Elevated source with gravity-driven fall and splashy landing.
+    pub fn waterfall_preset() -> Self {
+        let domain_id = NodeId("liquid_domain".into());
+        let source_id = NodeId("liquid_source".into());
+        let solver_id = NodeId("liquid_solver".into());
+        let root_id = NodeId("liquid_root".into());
+
+        Self {
+            name: "Waterfall".into(),
+            nodes: vec![
+                empty_node(domain_id.clone(), NodeKind::LiquidDomain, "Liquid Domain")
+                    .with_liquid_domain(LiquidDomainInput {
+                        resolution: 20,
+                        bounds_min: Vec3::new(-3.0, 0.0, -3.0),
+                        bounds_max: Vec3::new(3.0, 10.0, 3.0),
+                        seed: 33,
+                        initial_particles: 200,
+                        particle_radius: 0.1,
+                    }),
+                empty_node(source_id.clone(), NodeKind::LiquidSource, "Cascade Source")
+                    .with_liquid_source(LiquidSourceInput {
+                        position: Vec3::new(0.0, 9.0, 0.0),
+                        radius: 0.7,
+                        emission_rate: 12.0,
+                        velocity: Vec3::new(0.0, -3.5, 0.0),
+                        active_until_step: 0,
+                    }),
+                empty_node(solver_id.clone(), NodeKind::LiquidSolver, "Liquid Solver")
+                    .with_liquid_solver(LiquidSolverInput {
+                        steps: 72,
+                        frame_stride: 3,
+                        gravity: 12.0,
+                        flip_ratio: 0.97,
+                        viscosity: 0.01,
+                        pressure_iterations: 22,
+                        wave_amplitude: 0.0,
+                        wave_frequency: 0.0,
+                        terrain_height: 0.0,
+                        max_particles: 14000,
+                    }),
+                empty_node(root_id.clone(), NodeKind::LiquidRoot, "Liquid Surface"),
+            ],
+            edges: vec![
+                Edge { from: domain_id.clone(), to: source_id.clone() },
+                Edge { from: source_id.clone(), to: solver_id.clone() },
+                Edge { from: solver_id.clone(), to: root_id.clone() },
+            ],
+        }
+    }
+
+    /// Basin fill from a source over time.
+    pub fn flood_basin_preset() -> Self {
+        let domain_id = NodeId("liquid_domain".into());
+        let source_id = NodeId("liquid_source".into());
+        let solver_id = NodeId("liquid_solver".into());
+        let root_id = NodeId("liquid_root".into());
+
+        Self {
+            name: "Flood Basin".into(),
+            nodes: vec![
+                empty_node(domain_id.clone(), NodeKind::LiquidDomain, "Liquid Domain")
+                    .with_liquid_domain(LiquidDomainInput {
+                        resolution: 20,
+                        bounds_min: Vec3::new(-5.0, 0.0, -5.0),
+                        bounds_max: Vec3::new(5.0, 4.0, 5.0),
+                        seed: 55,
+                        initial_particles: 100,
+                        particle_radius: 0.11,
+                    }),
+                empty_node(source_id.clone(), NodeKind::LiquidSource, "Inflow Source")
+                    .with_liquid_source(LiquidSourceInput {
+                        position: Vec3::new(-3.5, 0.6, 0.0),
+                        radius: 0.5,
+                        emission_rate: 10.0,
+                        velocity: Vec3::new(1.2, 0.3, 0.0),
+                        active_until_step: 80,
+                    }),
+                empty_node(solver_id.clone(), NodeKind::LiquidSolver, "Liquid Solver")
+                    .with_liquid_solver(LiquidSolverInput {
+                        steps: 90,
+                        frame_stride: 3,
+                        gravity: 9.8,
+                        flip_ratio: 0.95,
+                        viscosity: 0.03,
+                        pressure_iterations: 20,
+                        wave_amplitude: 0.0,
+                        wave_frequency: 0.0,
+                        terrain_height: 0.0,
+                        max_particles: 16000,
+                    }),
+                empty_node(root_id.clone(), NodeKind::LiquidRoot, "Liquid Surface"),
+            ],
+            edges: vec![
+                Edge { from: domain_id.clone(), to: source_id.clone() },
+                Edge { from: source_id.clone(), to: solver_id.clone() },
+                Edge { from: solver_id.clone(), to: root_id.clone() },
+            ],
+        }
+    }
 }
 
 fn empty_node(id: NodeId, kind: NodeKind, label: &str) -> Node {
@@ -183,6 +349,9 @@ fn empty_node(id: NodeId, kind: NodeKind, label: &str) -> Node {
         smoke_domain: None,
         smoke_source: None,
         smoke_solver: None,
+        liquid_domain: None,
+        liquid_source: None,
+        liquid_solver: None,
     }
 }
 
@@ -216,6 +385,21 @@ impl Node {
         self.smoke_solver = Some(solver);
         self
     }
+
+    fn with_liquid_domain(mut self, domain: LiquidDomainInput) -> Self {
+        self.liquid_domain = Some(domain);
+        self
+    }
+
+    fn with_liquid_source(mut self, source: LiquidSourceInput) -> Self {
+        self.liquid_source = Some(source);
+        self
+    }
+
+    fn with_liquid_solver(mut self, solver: LiquidSolverInput) -> Self {
+        self.liquid_solver = Some(solver);
+        self
+    }
 }
 
 /// Cooked output statistics for city and smoke graphs.
@@ -236,6 +420,16 @@ pub struct CookResult {
     pub smoke_frame_count: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub smoke_particle_count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub liquid_resolution: Option<[u32; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub liquid_steps: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub liquid_frame_count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub liquid_particle_count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub liquid_max_speed: Option<f32>,
 }
 
 /// Internal evaluated values flowing through the graph.
@@ -254,6 +448,12 @@ enum NodeValue {
         solver: SmokeSolverInput,
     },
     SmokeVolume(SmokeVolume),
+    LiquidSetup {
+        domain: LiquidDomainInput,
+        sources: Vec<LiquidSourceInput>,
+        solver: LiquidSolverInput,
+    },
+    LiquidVolume(LiquidVolume),
 }
 
 /// Evaluated city geometry ready for stats or export.
@@ -273,6 +473,26 @@ pub struct CityInstanced {
 /// Evaluates the graph and returns combined mesh or smoke statistics.
 pub fn cook_graph(graph: &Graph) -> Result<CookResult, String> {
     match graph_mode(graph) {
+        GraphMode::Liquid => {
+            let volume = evaluate_liquid_volume(graph)?;
+            Ok(CookResult {
+                vertex_count: 0,
+                index_count: 0,
+                triangle_count: 0,
+                instance_count: 0,
+                graph_name: graph.name.clone(),
+                smoke_resolution: None,
+                smoke_max_density: None,
+                smoke_steps: None,
+                smoke_frame_count: None,
+                smoke_particle_count: None,
+                liquid_resolution: Some(volume.stats.resolution),
+                liquid_steps: Some(volume.stats.step_count),
+                liquid_frame_count: Some(volume.stats.frame_count),
+                liquid_particle_count: Some(volume.stats.particle_count),
+                liquid_max_speed: Some(volume.stats.max_speed),
+            })
+        }
         GraphMode::Smoke => {
             let volume = evaluate_smoke_volume(graph)?;
             Ok(CookResult {
@@ -286,6 +506,11 @@ pub fn cook_graph(graph: &Graph) -> Result<CookResult, String> {
                 smoke_steps: Some(volume.stats.step_count),
                 smoke_frame_count: Some(volume.stats.frame_count),
                 smoke_particle_count: Some(volume.stats.particle_count),
+                liquid_resolution: None,
+                liquid_steps: None,
+                liquid_frame_count: None,
+                liquid_particle_count: None,
+                liquid_max_speed: None,
             })
         }
         GraphMode::City => {
@@ -301,6 +526,11 @@ pub fn cook_graph(graph: &Graph) -> Result<CookResult, String> {
                 smoke_steps: None,
                 smoke_frame_count: None,
                 smoke_particle_count: None,
+                liquid_resolution: None,
+                liquid_steps: None,
+                liquid_frame_count: None,
+                liquid_particle_count: None,
+                liquid_max_speed: None,
             })
         }
     }
@@ -326,6 +556,22 @@ pub fn evaluate_city_instanced(graph: &Graph) -> Result<CityInstanced, String> {
         }),
         Some(_) => Err("CityRoot did not receive city output".into()),
         None => Err("CityRoot was not evaluated".into()),
+    }
+}
+
+/// Evaluates a liquid graph and returns the simulated volume.
+pub fn evaluate_liquid_volume(graph: &Graph) -> Result<LiquidVolume, String> {
+    let root = graph
+        .nodes
+        .iter()
+        .find(|n| n.kind == NodeKind::LiquidRoot)
+        .ok_or("graph missing LiquidRoot node")?;
+
+    let values = evaluate_all(graph)?;
+    match values.get(&root.id) {
+        Some(NodeValue::LiquidVolume(v)) => Ok(v.clone()),
+        Some(_) => Err("LiquidRoot did not receive liquid volume".into()),
+        None => Err("LiquidRoot was not evaluated".into()),
     }
 }
 
@@ -490,6 +736,41 @@ fn evaluate_node(
                 _ => Err(format!("SmokeRoot input {} has unsupported type", input_id.0)),
             }
         }
+        NodeKind::LiquidDomain => {
+            let domain = node
+                .liquid_domain
+                .clone()
+                .ok_or_else(|| format!("{} missing liquid_domain", node.id.0))?;
+            Ok(NodeValue::LiquidSetup {
+                domain,
+                sources: Vec::new(),
+                solver: LiquidSolverInput::default(),
+            })
+        }
+        NodeKind::LiquidSource => {
+            let mut setup = input_liquid_setup(inputs, cache)?;
+            if let Some(source) = node.liquid_source.clone() {
+                setup.sources.push(source);
+            }
+            Ok(NodeValue::LiquidSetup {
+                domain: setup.domain,
+                sources: setup.sources,
+                solver: setup.solver,
+            })
+        }
+        NodeKind::LiquidSolver => {
+            let setup = input_liquid_setup(inputs, cache)?;
+            let solver = node.liquid_solver.clone().unwrap_or(setup.solver);
+            let volume = simulate_liquid(&setup.domain, &setup.sources, &solver);
+            Ok(NodeValue::LiquidVolume(volume))
+        }
+        NodeKind::LiquidRoot => {
+            let input_id = inputs.first().ok_or("LiquidRoot requires an input edge")?;
+            match cache.get(input_id) {
+                Some(NodeValue::LiquidVolume(v)) => Ok(NodeValue::LiquidVolume(v.clone())),
+                _ => Err(format!("LiquidRoot input {} has unsupported type", input_id.0)),
+            }
+        }
     }
 }
 
@@ -515,6 +796,28 @@ struct SmokeSetupAccum {
     domain: SmokeDomainInput,
     sources: Vec<SmokeSourceInput>,
     solver: SmokeSolverInput,
+}
+
+struct LiquidSetupAccum {
+    domain: LiquidDomainInput,
+    sources: Vec<LiquidSourceInput>,
+    solver: LiquidSolverInput,
+}
+
+fn input_liquid_setup(
+    inputs: &[NodeId],
+    cache: &HashMap<NodeId, NodeValue>,
+) -> Result<LiquidSetupAccum, String> {
+    for id in inputs {
+        if let Some(NodeValue::LiquidSetup { domain, sources, solver }) = cache.get(id) {
+            return Ok(LiquidSetupAccum {
+                domain: *domain,
+                sources: sources.clone(),
+                solver: *solver,
+            });
+        }
+    }
+    Err("liquid node missing LiquidDomain upstream chain".into())
 }
 
 fn input_smoke_setup(
@@ -568,6 +871,28 @@ mod tests {
         assert!(result.smoke_max_density.unwrap_or(0.0) > 0.0);
         assert!(result.smoke_steps.unwrap_or(0) >= 1);
         assert!(result.smoke_particle_count.unwrap_or(0) > 0);
+    }
+
+    #[test]
+    fn liquid_ocean_preset_cooks() {
+        let graph = Graph::ocean_patch_preset();
+        let result = cook_graph(&graph).expect("cook liquid");
+        assert!(result.liquid_particle_count.unwrap_or(0) > 0);
+        assert!(result.liquid_steps.unwrap_or(0) >= 1);
+    }
+
+    #[test]
+    fn liquid_waterfall_preset_cooks() {
+        let graph = Graph::waterfall_preset();
+        let result = cook_graph(&graph).expect("cook waterfall");
+        assert!(result.liquid_particle_count.unwrap_or(0) > 0);
+    }
+
+    #[test]
+    fn liquid_flood_preset_cooks() {
+        let graph = Graph::flood_basin_preset();
+        let result = cook_graph(&graph).expect("cook flood");
+        assert!(result.liquid_frame_count.unwrap_or(0) >= 2);
     }
 
     #[test]
