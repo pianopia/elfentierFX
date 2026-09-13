@@ -242,6 +242,18 @@ Returns instanced geometry for city graphs, animated smoke impostors, or animate
 - Smoke graphs: `smoke.frames[]` holds soft particle impostors; viewport autoplays at `smoke.fps`.
 - Liquid graphs: `liquid.frames[]` holds FLIP particles with radii; viewport autoplays at `liquid.fps`.
 - Realtime preview is **wgpu-only**. On init/render failure, `native_preview` is null and `native_preview_error` carries the error string for the UI (no WebGL fallback).
+- `native_preview` / `render_native_viewport_command` return `NativePreviewImage` with `rgba_base64` (standard base64 of `width * height * 4` RGBA8 bytes). The desktop UI decodes this payload and rejects truncated or missing buffers instead of drawing a blank canvas.
+
+```json
+{
+  "width": 960,
+  "height": 720,
+  "rgba_base64": "…",
+  "backend": "wgpu"
+}
+```
+
+**Linux note:** headless CI/VMs may use llvmpipe for wgpu; preview pixels are still validated in Rust tests. Desktop users need a working Vulkan/Metal/DX12 driver for realtime orbit/animation.
 
 Export (`export_gltf`) writes a **merged** mesh for city graphs only.
 

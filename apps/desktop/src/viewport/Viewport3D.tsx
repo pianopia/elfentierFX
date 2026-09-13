@@ -34,13 +34,34 @@ function ViewportErrorPanel({ message }: { message: string }) {
   );
 }
 
+function decodePreviewRgba(preview: NativePreviewImage): Uint8ClampedArray {
+  const expected = preview.width * preview.height * 4;
+  if (!preview.rgba_base64) {
+    throw new Error("Native preview is missing rgba_base64 payload");
+  }
+  const binary = atob(preview.rgba_base64);
+  if (binary.length !== expected) {
+    throw new Error(
+      `Native preview RGBA length ${binary.length} does not match ${preview.width}x${preview.height} (expected ${expected} bytes)`,
+    );
+  }
+  const rgba = new Uint8ClampedArray(expected);
+  for (let i = 0; i < expected; i++) {
+    rgba[i] = binary.charCodeAt(i);
+  }
+  return rgba;
+}
+
 function drawPreview(canvas: HTMLCanvasElement, preview: NativePreviewImage) {
   canvas.width = preview.width;
   canvas.height = preview.height;
   const ctx = canvas.getContext("2d");
-  if (!ctx) return;
+  if (!ctx) {
+    throw new Error("2D canvas context unavailable for native wgpu preview");
+  }
+  const rgba = decodePreviewRgba(preview);
   const imageData = new ImageData(preview.width, preview.height);
-  imageData.data.set(preview.rgba);
+  imageData.data.set(rgba);
   ctx.putImageData(imageData, 0, 0);
 }
 
@@ -183,16 +204,20 @@ export default function Viewport3D({
     if (!canRender || !mesh) return;
 
     if (nativePreview && canvasRef.current) {
-      drawPreview(canvasRef.current, nativePreview);
-      setStats((prev) => ({
-        ...prev,
-        backend: nativePreview.backend,
-        particles: particleCountAt(mesh, 0),
-      }));
+      try {
+        drawPreview(canvasRef.current, nativePreview);
+        setStats((prev) => ({
+          ...prev,
+          backend: nativePreview.backend,
+          particles: particleCountAt(mesh, 0),
+        }));
+      } catch (error) {
+        reportRenderError(error);
+      }
     } else if (cameraRef.current) {
       void renderFrame(0, cameraRef.current);
     }
-  }, [mesh, nativePreview, nativeCamera, canRender, renderFrame]);
+  }, [mesh, nativePreview, nativeCamera, canRender, renderFrame, reportRenderError]);
 
   useEffect(() => {
     if (!canRender || !mesh) return undefined;

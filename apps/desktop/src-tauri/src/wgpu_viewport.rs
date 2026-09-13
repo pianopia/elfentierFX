@@ -1,9 +1,14 @@
 //! Native wgpu offscreen viewport (Vulkan/Metal/DX12) for mesh + smoke particles.
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use elfentier_core::viewport::{ViewportLiquidFrame, ViewportMesh, ViewportSmokeFrame};
 use pollster::block_on;
 use serde::{Deserialize, Serialize};
+use std::sync::mpsc;
 use wgpu::util::DeviceExt;
+
+/// sRGB bytes for the wgpu clear color (0.047, 0.055, 0.071, 1.0).
+pub const CLEAR_RGBA: [u8; 4] = [12, 14, 18, 255];
 
 const MESH_SHADER: &str = r#"
 struct Camera {
@@ -237,8 +242,57 @@ impl Default for NativeViewportCamera {
 pub struct NativePreviewImage {
     pub width: u32,
     pub height: u32,
-    pub rgba: Vec<u8>,
+    /// Base64-encoded RGBA8 pixels (`width * height * 4` bytes decoded).
+    pub rgba_base64: String,
     pub backend: String,
+}
+
+impl NativePreviewImage {
+    pub fn from_rgba(
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+        backend: impl Into<String>,
+    ) -> Result<Self, String> {
+        let expected = width as usize * height as usize * 4;
+        if rgba.len() != expected {
+            return Err(format!(
+                "preview rgba length {} does not match {}x{} (expected {} bytes)",
+                rgba.len(),
+                width,
+                height,
+                expected
+            ));
+        }
+        Ok(Self {
+            width,
+            height,
+            rgba_base64: STANDARD.encode(&rgba),
+            backend: backend.into(),
+        })
+    }
+
+    pub fn decode_rgba(&self) -> Result<Vec<u8>, String> {
+        let expected = self.width as usize * self.height as usize * 4;
+        let rgba = STANDARD
+            .decode(&self.rgba_base64)
+            .map_err(|err| format!("preview rgba base64 decode failed: {err}"))?;
+        if rgba.len() != expected {
+            return Err(format!(
+                "decoded preview rgba length {} does not match {}x{} (expected {} bytes)",
+                rgba.len(),
+                self.width,
+                self.height,
+                expected
+            ));
+        }
+        Ok(rgba)
+    }
+}
+
+/// Returns true when the buffer contains pixels that differ from the wgpu clear color.
+pub fn preview_has_visible_pixels(rgba: &[u8], clear: [u8; 4]) -> bool {
+    rgba.chunks_exact(4).any(|px| px != clear)
 }
 
 #[repr(C)]
@@ -1196,8 +1250,16 @@ async fn render_wgpu(
     queue.submit(Some(encoder.finish()));
 
     let slice = readback.slice(..);
-    slice.map_async(wgpu::MapMode::Read, |_| {});
+    let (map_tx, map_rx) = mpsc::channel();
+    slice.map_async(wgpu::MapMode::Read, move |status| {
+        let _ = map_tx.send(status);
+    });
     device.poll(wgpu::Maintain::Wait);
+    match map_rx.recv() {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => return Err(format!("wgpu readback map failed: {err}")),
+        Err(_) => return Err("wgpu readback map channel closed".into()),
+    }
 
     let mapped = slice.get_mapped_range();
     let mut rgba = vec![0u8; (w * h * 4) as usize];
@@ -1210,12 +1272,7 @@ async fn render_wgpu(
     drop(mapped);
     readback.unmap();
 
-    Ok(NativePreviewImage {
-        width: w,
-        height: h,
-        rgba,
-        backend: "wgpu".into(),
-    })
+    NativePreviewImage::from_rgba(w, h, rgba, "wgpu")
 }
 
 #[cfg(test)]
@@ -1244,5 +1301,56 @@ mod tests {
         let (verts, indices) = merge_mesh(&mesh);
         assert!(!verts.is_empty());
         assert!(!indices.is_empty());
+    }
+
+    #[test]
+    fn preview_from_rgba_validates_length() {
+        let err = NativePreviewImage::from_rgba(2, 2, vec![0, 1, 2], "wgpu")
+            .expect_err("short buffer");
+        assert!(err.contains("expected 16 bytes"));
+    }
+
+    #[test]
+    fn preview_base64_round_trip() {
+        let rgba = vec![1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+        let preview = NativePreviewImage::from_rgba(2, 2, rgba.clone(), "wgpu").expect("pack");
+        assert_eq!(preview.decode_rgba().expect("decode"), rgba);
+    }
+
+    #[test]
+    fn render_smoke_puff_has_non_clear_pixels() {
+        let mesh = cook_viewport_mesh(&Graph::smoke_puff_preset()).expect("cook");
+        let camera = default_camera_for_mesh(&mesh);
+        let preview = render_native_viewport(&mesh, 0, 320, 240, &camera).expect("render");
+        let rgba = preview.decode_rgba().expect("decode");
+        assert_eq!(rgba.len(), 320 * 240 * 4);
+        assert!(
+            preview_has_visible_pixels(&rgba, CLEAR_RGBA),
+            "smoke_puff preview should contain grid, collider, or smoke pixels"
+        );
+    }
+
+    #[test]
+    fn render_smoke_sphere_has_non_clear_pixels() {
+        let mesh = cook_viewport_mesh(&Graph::smoke_sphere_preset()).expect("cook");
+        let camera = default_camera_for_mesh(&mesh);
+        let preview = render_native_viewport(&mesh, 0, 320, 240, &camera).expect("render");
+        let rgba = preview.decode_rgba().expect("decode");
+        assert!(
+            preview_has_visible_pixels(&rgba, CLEAR_RGBA),
+            "smoke_sphere preview should contain mesh collider and smoke pixels"
+        );
+    }
+
+    #[test]
+    fn render_shop_street_has_non_clear_pixels() {
+        let mesh = cook_viewport_mesh(&Graph::shop_street_preset()).expect("cook");
+        let camera = default_camera_for_mesh(&mesh);
+        let preview = render_native_viewport(&mesh, 0, 320, 240, &camera).expect("render");
+        let rgba = preview.decode_rgba().expect("decode");
+        assert!(
+            preview_has_visible_pixels(&rgba, CLEAR_RGBA),
+            "shop_street preview should contain building mesh and grid pixels"
+        );
     }
 }
