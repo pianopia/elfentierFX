@@ -9,7 +9,8 @@ my_export/
   manifest.json          # elfentier_export_manifest_v1
   graph.json             # source graph snapshot (elfentier_graph_v1)
   city_mesh.glb          # city graphs only
-  smoke_density.raw      # smoke graphs only
+  smoke_density.raw      # smoke graphs only (XY atlas)
+  volume_texture.evol    # smoke graphs only (3D Texture3D path)
   liquid_cache.raw       # liquid graphs only
 ```
 
@@ -61,6 +62,27 @@ Export from the desktop app via **Export Bundle**, or call the Tauri command `ex
 - City graphs only (`city_mesh.glb`)
 - Importable in Unity, Unreal, Blender, and any glTF 2.0 viewer
 
+## Volume texture (`elfentier_volume_texture_v1`)
+
+Binary little-endian payload (`.evol` extension) for Unity `Texture3D` import and GPU raymarch preview.
+
+| Offset | Size | Field |
+|--------|------|-------|
+| 0 | 4 | magic `EFVT` |
+| 4 | 4 | version `u32` (=1) |
+| 8 | 4 | `nx` |
+| 12 | 4 | `ny` |
+| 16 | 4 | `nz` |
+| 20 | 4 | `frame_count` |
+| 24 | 4 | `channels` (=1 density) |
+| 28 | 12 | `bounds_min` xyz `f32` |
+| 40 | 12 | `bounds_max` xyz `f32` |
+| 52 | … | `f32` samples, frame-major, x-fastest indexing |
+
+- Smoke graphs only (`volume_texture.evol` in bundles)
+- Phase 1 bridge toward OpenVDB: convert desktop exports or run `tools/vdb_convert`
+- Unity: `integrations/unity/ElfentierFX.OpenVDB/` (`ElfentierVolumePlayer`, menu **Import Volume / OpenVDB…**)
+
 ## Smoke density atlas (`elfentier_smoke_atlas_v1`)
 
 Text header followed by little-endian `f32` density samples:
@@ -72,7 +94,8 @@ Text header followed by little-endian `f32` density samples:
 ```
 
 - Smoke graphs only (`smoke_density.raw`)
-- XY slices stacked frame-major; suitable for flipbook or 3D texture import
+- XY slices max-projected through Z, stacked frame-major; suitable for flipbook materials
+- Prefer `volume_texture.evol` for full 3D density in Unity
 
 ## Liquid particle cache (`elfentier_liquid_cache_v1`)
 
@@ -96,12 +119,23 @@ JSON graph document (`graph.json`) included in every bundle for reproducibility 
 
 | Target | Path | Import entry point |
 |--------|------|-------------------|
-| Unity 6 | `integrations/unity/ElfentierFX/` | **ElfentierFX → Import Export Bundle…** |
-| Unreal Engine | `integrations/unreal/ElfentierFX/` | Plugin skeleton + README import notes |
+| Unity 6 (bundle) | `integrations/unity/ElfentierFX/` | **ElfentierFX → Import Export Bundle…** |
+| Unity 6 (volume) | `integrations/unity/ElfentierFX.OpenVDB/` | **ElfentierFX → Import Volume / OpenVDB…** |
+| Unreal Engine | `integrations/unreal/ElfentierFX/` | Plugin skeleton + README import notes (native VDB-oriented) |
 | Blender 4.x | `integrations/blender/elfentier_fx/` | **Import ElfentierFX Bundle** operator |
+
+## CLI converter (`tools/vdb_convert`)
+
+```bash
+cargo run -p vdb_convert -- from-smoke-preset /tmp/smoke.evol
+cargo run -p vdb_convert -- info /tmp/smoke.evol
+```
+
+`from-vdb` is a Phase 1 stub — native OpenVDB read will emit `.evol` in a later milestone.
 
 ## Future (out of scope for Phase 1)
 
+- Native `.vdb` / NanoVDB import inside Unity (interface `IVdbImporter` reserved)
 - Live TCP bridge to running editors (interface stub comments only)
 - Full Niagara graph authoring
 - USD pipeline

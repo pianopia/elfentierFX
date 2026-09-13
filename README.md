@@ -24,7 +24,8 @@ apps/desktop/          Tauri 2 desktop app (Rust host + React frontend)
 crates/elfentier_core/ Shared procedural core (building, fluids, graph cook, export)
 docs/agent-api.md      JSON command surface for agents
 docs/export-formats.md Cook export bundle + payload format reference
-integrations/          Unity, Unreal, Blender import stubs (Phase 1)
+integrations/          Unity, Unreal, Blender import packages (+ Unity OpenVDB volume)
+tools/vdb_convert/     Phase 1 CLI bridge to Unity volume textures (.evol)
 ```
 
 ## Alpha 2 + Fluids Phase 1

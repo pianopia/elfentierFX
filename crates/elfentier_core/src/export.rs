@@ -7,6 +7,7 @@ use crate::graph::{
 use crate::liquid::export_particle_cache;
 use crate::mesh::Mesh;
 use crate::smoke::export_density_atlas;
+use crate::volume_texture::{export_volume_texture, VOLUME_TEXTURE_FORMAT};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -264,6 +265,22 @@ pub fn export_cook_bundle(graph: &Graph, path: Option<&str>) -> Result<ExportBun
                 bounds_max: Some(vec3_to_array(volume.bounds_max)),
                 resolution: Some(volume.stats.resolution),
             });
+
+            let volume_path = dir.join("volume_texture.evol");
+            let volume_path_str = volume_path.to_string_lossy().to_string();
+            let volume_result =
+                export_volume_texture(&volume, &volume_path_str).map_err(|e| e.to_string())?;
+            payloads.push(ExportPayloadEntry {
+                format: VOLUME_TEXTURE_FORMAT.into(),
+                path: "volume_texture.evol".into(),
+                frame_count: Some(volume_result.frame_count),
+                byte_len: Some(volume_result.byte_len),
+                vertex_count: None,
+                triangle_count: None,
+                bounds_min: Some(vec3_to_array(volume.bounds_min)),
+                bounds_max: Some(vec3_to_array(volume.bounds_max)),
+                resolution: Some(volume_result.resolution),
+            });
         }
         GraphMode::Liquid => {
             let volume = evaluate_liquid_volume(graph)?;
@@ -393,7 +410,7 @@ mod tests {
     }
 
     #[test]
-    fn smoke_bundle_writes_smoke_atlas_payload() {
+    fn smoke_bundle_writes_smoke_atlas_and_volume_texture_payloads() {
         let graph = Graph::smoke_puff_preset();
         let dir = std::env::temp_dir().join("elfentier_test_smoke_bundle");
         let _ = std::fs::remove_dir_all(&dir);
@@ -404,7 +421,12 @@ mod tests {
             .payloads
             .iter()
             .any(|p| p.format == "elfentier_smoke_atlas_v1"));
+        assert!(manifest
+            .payloads
+            .iter()
+            .any(|p| p.format == VOLUME_TEXTURE_FORMAT));
         assert!(dir.join("smoke_density.raw").exists());
+        assert!(dir.join("volume_texture.evol").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

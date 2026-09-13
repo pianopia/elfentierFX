@@ -7,6 +7,11 @@ namespace ElfentierFX.Editor
 {
     public static class ElfentierBundleImporter
     {
+        /// <summary>
+        /// Optional hook registered by ElfentierFX.OpenVDB for <c>volume_texture.evol</c> playback.
+        /// </summary>
+        public static System.Action<string, ExportManifest, GameObject> VolumeImportHandler;
+
         const string MenuPath = "ElfentierFX/Import Export Bundle…";
 
         [MenuItem(MenuPath)]
@@ -24,13 +29,13 @@ namespace ElfentierFX.Editor
         public static void ImportBundleAtPath(string bundleDirectory)
         {
             var manifest = ExportManifestReader.Load(bundleDirectory);
-            var root = new GameObject($"ElfentierFX_{manifest.graph_name}");
+            var root = new GameObject($"ElfentierFX_{manifest.GraphName}");
             root.transform.position = Vector3.zero;
 
             Debug.Log(
-                $"[ElfentierFX] Imported bundle '{manifest.graph_name}' mode={manifest.graph_mode} units={manifest.units} up={manifest.up_axis} fps={manifest.frame_rate.ToString("F1")}");
+                $"[ElfentierFX] Imported bundle '{manifest.GraphName}' mode={manifest.GraphMode} units={manifest.Units} up={manifest.UpAxis} fps={manifest.FrameRate.ToString("F1")}");
 
-            switch (manifest.graph_mode)
+            switch (manifest.GraphMode)
             {
                 case "city":
                     ImportCityMesh(bundleDirectory, manifest, root.transform);
@@ -42,7 +47,7 @@ namespace ElfentierFX.Editor
                     ImportSmokeAtlas(bundleDirectory, manifest, root.transform);
                     break;
                 default:
-                    Debug.LogWarning($"[ElfentierFX] Unknown graph_mode: {manifest.graph_mode}");
+                    Debug.LogWarning($"[ElfentierFX] Unknown graph_mode: {manifest.GraphMode}");
                     break;
             }
 
@@ -52,7 +57,7 @@ namespace ElfentierFX.Editor
         static void ImportCityMesh(string bundleDirectory, ExportManifest manifest, Transform parent)
         {
             var payload = ExportManifestReader.FindPayload(manifest, "gltf_glb");
-            var relative = payload?.path ?? "city_mesh.glb";
+            var relative = payload?.Path ?? "city_mesh.glb";
             var glbPath = Path.Combine(bundleDirectory, relative);
 
             if (!File.Exists(glbPath))
@@ -61,7 +66,7 @@ namespace ElfentierFX.Editor
                 return;
             }
 
-            var destDir = Path.Combine("Assets", "ElfentierFX", Sanitize(manifest.graph_name));
+            var destDir = Path.Combine("Assets", "ElfentierFX", Sanitize(manifest.GraphName));
             Directory.CreateDirectory(destDir);
             var destPath = Path.Combine(destDir, Path.GetFileName(glbPath));
             File.Copy(glbPath, destPath, true);
@@ -70,13 +75,13 @@ namespace ElfentierFX.Editor
             var placeholder = new GameObject("city_mesh");
             placeholder.transform.SetParent(parent, false);
             Debug.Log(
-                $"[ElfentierFX] Copied GLB to {destPath}. Import with glTFast or drag into scene. tris={payload?.triangle_count}");
+                $"[ElfentierFX] Copied GLB to {destPath}. Import with glTFast or drag into scene. tris={payload?.TriangleCount}");
         }
 
         static void ImportLiquidCache(string bundleDirectory, ExportManifest manifest, GameObject root)
         {
             var payload = ExportManifestReader.FindPayload(manifest, LiquidCacheReader.Format);
-            var relative = payload?.path ?? "liquid_cache.raw";
+            var relative = payload?.Path ?? "liquid_cache.raw";
             var cachePath = Path.Combine(bundleDirectory, relative);
 
             if (!File.Exists(cachePath))
@@ -87,19 +92,24 @@ namespace ElfentierFX.Editor
 
             var frames = LiquidCacheReader.Load(cachePath);
             var playback = root.AddComponent<ElfentierLiquidPlayback>();
-            playback.SetFrames(frames, manifest.frame_rate);
+            playback.SetFrames(frames, manifest.FrameRate);
             Debug.Log($"[ElfentierFX] Loaded {frames.Count} liquid frames from {cachePath}");
         }
 
         static void ImportSmokeAtlas(string bundleDirectory, ExportManifest manifest, Transform parent)
         {
             var payload = ExportManifestReader.FindPayload(manifest, "elfentier_smoke_atlas_v1");
-            var relative = payload?.path ?? "smoke_density.raw";
+            var relative = payload?.Path ?? "smoke_density.raw";
             var atlasPath = Path.Combine(bundleDirectory, relative);
-            var marker = new GameObject("smoke_atlas_stub");
+            var marker = new GameObject("smoke_atlas");
             marker.transform.SetParent(parent, false);
             Debug.Log(
-                $"[ElfentierFX] Smoke atlas stub at {atlasPath} frames={payload?.frame_count}. Wire to flipbook material manually.");
+                $"[ElfentierFX] Smoke XY atlas at {atlasPath} frames={payload?.FrameCount}. Use OpenVDB package for 3D volume playback.");
+
+            if (VolumeImportHandler != null)
+            {
+                VolumeImportHandler(bundleDirectory, manifest, parent.gameObject);
+            }
         }
 
         static string Sanitize(string name)
