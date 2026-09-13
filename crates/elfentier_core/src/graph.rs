@@ -182,7 +182,11 @@ impl Graph {
                 empty_node(domain_id.clone(), NodeKind::SmokeDomain, "Smoke Domain")
                     .with_smoke_domain(SmokeDomainInput::default()),
                 empty_node(source_id.clone(), NodeKind::SmokeSource, "Puff Source")
-                    .with_smoke_source(SmokeSourceInput::default()),
+                    .with_smoke_source(SmokeSourceInput {
+                        emission_rate: 3.2,
+                        upward_velocity: 3.0,
+                        ..Default::default()
+                    }),
                 empty_node(collider_id.clone(), NodeKind::SmokeCollider, "Floor Collider")
                     .with_smoke_collider(ColliderInput::floor(0.35, 4.0)),
                 empty_node(solver_id.clone(), NodeKind::SmokeSolver, "Smoke Solver")

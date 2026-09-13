@@ -1,0 +1,18 @@
+[package]
+name = "elfentier_wgpu"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Native wgpu offscreen viewport for elfentierFX previews"
+
+[dependencies]
+elfentier_core = { path = "../elfentier_core" }
+serde = { workspace = true }
+wgpu = "24"
+pollster = "0.4"
+bytemuck = { version = "1", features = ["derive"] }
+base64 = "0.22"
+
+[dev-dependencies]
+png = "0.17"
