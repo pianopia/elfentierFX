@@ -298,6 +298,35 @@ mod tests {
     }
 
     #[test]
+    fn smoke_puff_densest_frame_centroid_is_centered() {
+        let graph = Graph::smoke_puff_preset();
+        let mesh = cook_viewport_mesh(&graph).expect("smoke viewport");
+        let smoke = mesh.smoke.expect("smoke");
+        let frame = smoke
+            .frames
+            .iter()
+            .max_by_key(|f| f.particle_count)
+            .expect("frame");
+        let mut centroid = [0.0f32; 3];
+        let mut wsum = 0.0f32;
+        for i in 0..frame.particle_count as usize {
+            let weight = frame.opacities[i] * frame.sizes[i];
+            centroid[0] += frame.positions[i * 3] * weight;
+            centroid[1] += frame.positions[i * 3 + 1] * weight;
+            centroid[2] += frame.positions[i * 3 + 2] * weight;
+            wsum += weight;
+        }
+        centroid = centroid.map(|v| v / wsum);
+        eprintln!(
+            "puff densest frame particles={} centroid={:?}",
+            frame.particle_count,
+            centroid
+        );
+        assert!(centroid[0].abs() < 1.2);
+        assert!(centroid[1] > 0.5 && centroid[1] < 7.0);
+    }
+
+    #[test]
     fn liquid_viewport_from_ocean_preset() {
         let graph = Graph::ocean_patch_preset();
         let mesh = cook_viewport_mesh(&graph).expect("liquid viewport");
