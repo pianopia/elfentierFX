@@ -49,6 +49,12 @@ pub struct ViewportSmoke {
     pub frame_count: u32,
     pub fps: f32,
     pub stats: crate::smoke::SmokeStats,
+    /// Grid resolution `[nx, ny, nz]` for density preview frames.
+    #[serde(default)]
+    pub resolution: [u32; 3],
+    /// Per-frame voxel density (x-fastest), aligned with `frames`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub density_frames: Vec<Vec<f32>>,
 }
 
 /// Wireframe AABB overlay for a collider node.
@@ -199,6 +205,8 @@ pub fn pack_viewport_smoke(volume: &SmokeVolume, graph_name: &str) -> ViewportMe
             volume.bounds_max.z,
         ],
         stats: volume.stats,
+        resolution: volume.stats.resolution,
+        density_frames: volume.density_grids.clone(),
         frames,
     };
 
@@ -295,6 +303,35 @@ mod tests {
         assert!(smoke.frame_count >= 2);
         assert!(smoke.frames[0].particle_count > 0);
         assert!(!mesh.colliders.is_empty());
+    }
+
+    #[test]
+    fn smoke_puff_densest_frame_centroid_is_centered() {
+        let graph = Graph::smoke_puff_preset();
+        let mesh = cook_viewport_mesh(&graph).expect("smoke viewport");
+        let smoke = mesh.smoke.expect("smoke");
+        let frame = smoke
+            .frames
+            .iter()
+            .max_by_key(|f| f.particle_count)
+            .expect("frame");
+        let mut centroid = [0.0f32; 3];
+        let mut wsum = 0.0f32;
+        for i in 0..frame.particle_count as usize {
+            let weight = frame.opacities[i] * frame.sizes[i];
+            centroid[0] += frame.positions[i * 3] * weight;
+            centroid[1] += frame.positions[i * 3 + 1] * weight;
+            centroid[2] += frame.positions[i * 3 + 2] * weight;
+            wsum += weight;
+        }
+        centroid = centroid.map(|v| v / wsum);
+        eprintln!(
+            "puff densest frame particles={} centroid={:?}",
+            frame.particle_count,
+            centroid
+        );
+        assert!(centroid[0].abs() < 1.2);
+        assert!(centroid[1] > 0.5 && centroid[1] < 7.0);
     }
 
     #[test]
