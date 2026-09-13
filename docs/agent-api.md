@@ -31,7 +31,7 @@ JSON-serializable Tauri commands for external agents and the desktop UI. All com
 
 ### Preset ids
 
-`shop_street`, `grid_block`, `smoke_puff`, `smoke_viscous`, `ocean_patch`, `waterfall`, `flood_basin`
+`shop_street`, `grid_block`, `smoke_puff`, `smoke_viscous`, `smoke_sphere`, `ocean_patch`, `waterfall`, `flood_basin`, `liquid_ramp`
 
 ## Graph document
 
@@ -118,19 +118,42 @@ liquid_domain → liquid_source → liquid_collider → liquid_solver → liquid
 }
 ```
 
-`smoke_collider` / `liquid_collider` (static AABB):
+`smoke_collider` / `liquid_collider` (AABB or mesh SDF):
 
 ```json
 {
   "enabled": true,
+  "mode": "aabb",
   "bounds_min": { "x": -4, "y": 0, "z": -4 },
   "bounds_max": { "x": 4, "y": 0.35, "z": 4 },
   "bounce": 0.12,
-  "kill_inside": true
+  "kill_inside": true,
+  "mesh_kind": "sphere",
+  "mesh_resolution": 32,
+  "position": { "x": 0, "y": 2.2, "z": 0 },
+  "rotation_y": 0,
+  "scale": { "x": 1.5, "y": 1.5, "z": 1.5 }
 }
 ```
 
-Phase 2 notes: colliders are axis-aligned boxes only (no mesh SDF). `viscosity` on smoke damps velocity; on liquid it thickens FLIP motion via grid Laplacian drag. Viewport cook returns `mesh.colliders[]` wireframe line lists for wgpu overlay.
+Mesh SDF example (`mode: "mesh_sdf"`):
+
+```json
+{
+  "enabled": true,
+  "mode": "mesh_sdf",
+  "mesh_kind": "sphere",
+  "mesh_resolution": 28,
+  "position": { "x": 0, "y": 2.2, "z": 0 },
+  "scale": { "x": 1.5, "y": 1.5, "z": 1.5 },
+  "bounce": 0.12,
+  "kill_inside": true,
+  "bounds_min": { "x": -0.75, "y": 1.45, "z": -0.75 },
+  "bounds_max": { "x": 0.75, "y": 2.95, "z": 0.75 }
+}
+```
+
+Phase 2.5 notes: `mode` defaults to `aabb` when omitted. Mesh SDF uses a dense voxel grid built once per cook (not deforming/animated). Smoke zeros inward velocity along SDF gradient near the surface; liquid pushes particles out along the gradient (or ejects when `kill_inside`). Viewport cook returns mesh triangle wireframes for mesh SDF colliders. Accuracy is resolution-limited — see README Phase 2.5.
 
 ### Liquid params (on nodes)
 

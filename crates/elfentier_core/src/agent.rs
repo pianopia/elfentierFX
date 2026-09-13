@@ -60,6 +60,11 @@ pub fn list_presets() -> Vec<PresetInfo> {
             description: "Viscous smoke (ねっとり) with slower, thicker motion".into(),
         },
         PresetInfo {
+            id: "smoke_sphere".into(),
+            name: "Smoke Sphere Obstacle".into(),
+            description: "Eulerian smoke rising around a sphere mesh SDF collider".into(),
+        },
+        PresetInfo {
             id: "ocean_patch".into(),
             name: "Ocean Patch".into(),
             description: "Wide FLIP liquid body (水) with floor collider and gentle waves".into(),
@@ -74,6 +79,11 @@ pub fn list_presets() -> Vec<PresetInfo> {
             name: "Flood Basin".into(),
             description: "Basin fill (とろみ) with wall collider and higher viscosity".into(),
         },
+        PresetInfo {
+            id: "liquid_ramp".into(),
+            name: "Liquid Ramp".into(),
+            description: "FLIP inflow deflected by an inclined ramp mesh SDF collider".into(),
+        },
     ]
 }
 
@@ -84,9 +94,11 @@ pub fn get_preset(id: &str) -> Option<Graph> {
         "grid_block" => Some(Graph::grid_block_preset()),
         "smoke_puff" => Some(Graph::smoke_puff_preset()),
         "smoke_viscous" => Some(Graph::smoke_viscous_preset()),
+        "smoke_sphere" => Some(Graph::smoke_sphere_preset()),
         "ocean_patch" => Some(Graph::ocean_patch_preset()),
         "waterfall" => Some(Graph::waterfall_preset()),
         "flood_basin" => Some(Graph::flood_basin_preset()),
+        "liquid_ramp" => Some(Graph::liquid_ramp_preset()),
         _ => None,
     }
 }

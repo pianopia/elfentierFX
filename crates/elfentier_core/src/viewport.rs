@@ -1,7 +1,6 @@
 //! Viewport-ready mesh payload with GPU instancing and smoke particle support.
 
-use crate::collider::all_wireframe_segments;
-use crate::collider::ColliderInput;
+use crate::collider::{all_wireframe_segments, collider_display_bounds, ColliderInput};
 use crate::graph::{colliders_from_graph, evaluate_city_instanced, evaluate_liquid_volume, evaluate_smoke_volume, Graph, GraphMode};
 use crate::liquid::LiquidVolume;
 use crate::placement::InstanceTransform;
@@ -119,9 +118,10 @@ pub fn pack_collider_wireframes(colliders: &[ColliderInput]) -> Vec<ViewportColl
         .filter(|c| c.enabled)
         .map(|c| {
             let segments = all_wireframe_segments(std::slice::from_ref(c));
+            let (mn, mx) = collider_display_bounds(c);
             ViewportColliderWireframe {
-                bounds_min: [c.bounds_min.x, c.bounds_min.y, c.bounds_min.z],
-                bounds_max: [c.bounds_max.x, c.bounds_max.y, c.bounds_max.z],
+                bounds_min: [mn.x, mn.y, mn.z],
+                bounds_max: [mx.x, mx.y, mx.z],
                 lines: segments
                     .iter()
                     .flat_map(|p| [p[0], p[1], p[2]])

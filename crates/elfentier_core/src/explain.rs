@@ -82,8 +82,14 @@ pub fn explain_graph(graph: &Graph) -> String {
         }
         if let Some(node) = graph.nodes.iter().find(|n| n.kind == NodeKind::LiquidCollider) {
             let collider = node.liquid_collider.unwrap_or_default();
+            let kind = match collider.mode {
+                crate::collider::ColliderMode::MeshSdf => format!("mesh SDF ({:?})", collider.mesh_kind),
+                crate::collider::ColliderMode::Aabb => "AABB".into(),
+            };
             lines.push(format!(
-                "Liquid collider — AABB ({:.1},{:.1},{:.1})→({:.1},{:.1},{:.1})",
+                "Liquid collider — {} res {} ({:.1},{:.1},{:.1})→({:.1},{:.1},{:.1})",
+                kind,
+                collider.mesh_resolution,
                 collider.bounds_min.x,
                 collider.bounds_min.y,
                 collider.bounds_min.z,
@@ -118,8 +124,14 @@ pub fn explain_graph(graph: &Graph) -> String {
         }
         if let Some(node) = graph.nodes.iter().find(|n| n.kind == NodeKind::SmokeCollider) {
             let collider = node.smoke_collider.unwrap_or_default();
+            let kind = match collider.mode {
+                crate::collider::ColliderMode::MeshSdf => format!("mesh SDF ({:?})", collider.mesh_kind),
+                crate::collider::ColliderMode::Aabb => "AABB".into(),
+            };
             lines.push(format!(
-                "Smoke collider — AABB ({:.1},{:.1},{:.1})→({:.1},{:.1},{:.1})",
+                "Smoke collider — {} res {} ({:.1},{:.1},{:.1})→({:.1},{:.1},{:.1})",
+                kind,
+                collider.mesh_resolution,
                 collider.bounds_min.x,
                 collider.bounds_min.y,
                 collider.bounds_min.z,

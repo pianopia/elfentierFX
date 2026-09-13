@@ -329,6 +329,7 @@ impl Graph {
                         bounds_max: Vec3::new(2.8, 0.35, 2.8),
                         bounce: 0.18,
                         kill_inside: true,
+                        ..Default::default()
                     }),
                 empty_node(solver_id.clone(), NodeKind::LiquidSolver, "Liquid Solver")
                     .with_liquid_solver(LiquidSolverInput {
@@ -389,6 +390,7 @@ impl Graph {
                         bounds_max: Vec3::new(4.8, 0.4, 4.8),
                         bounce: 0.1,
                         kill_inside: true,
+                        ..Default::default()
                     }),
                 empty_node(solver_id.clone(), NodeKind::LiquidSolver, "Liquid Solver")
                     .with_liquid_solver(LiquidSolverInput {
@@ -402,6 +404,110 @@ impl Graph {
                         wave_frequency: 0.0,
                         terrain_height: 0.0,
                         max_particles: 16000,
+                    }),
+                empty_node(root_id.clone(), NodeKind::LiquidRoot, "Liquid Surface"),
+            ],
+            edges: vec![
+                Edge { from: domain_id.clone(), to: source_id.clone() },
+                Edge { from: source_id.clone(), to: collider_id.clone() },
+                Edge { from: collider_id.clone(), to: solver_id.clone() },
+                Edge { from: solver_id.clone(), to: root_id.clone() },
+            ],
+        }
+    }
+
+    /// Smoke puff rising around a sphere mesh SDF obstacle.
+    pub fn smoke_sphere_preset() -> Self {
+        let domain_id = NodeId("smoke_domain".into());
+        let source_id = NodeId("smoke_source".into());
+        let collider_id = NodeId("smoke_collider".into());
+        let solver_id = NodeId("smoke_solver".into());
+        let root_id = NodeId("smoke_root".into());
+
+        Self {
+            name: "Smoke Sphere Obstacle".into(),
+            nodes: vec![
+                empty_node(domain_id.clone(), NodeKind::SmokeDomain, "Smoke Domain")
+                    .with_smoke_domain(SmokeDomainInput::default()),
+                empty_node(source_id.clone(), NodeKind::SmokeSource, "Ground Source")
+                    .with_smoke_source(SmokeSourceInput {
+                        position: Vec3::new(0.0, 0.6, 0.0),
+                        radius: 0.7,
+                        emission_rate: 3.5,
+                        upward_velocity: 3.2,
+                        ..Default::default()
+                    }),
+                empty_node(collider_id.clone(), NodeKind::SmokeCollider, "Sphere Collider")
+                    .with_smoke_collider(ColliderInput::sphere(
+                        Vec3::new(0.0, 2.2, 0.0),
+                        0.75,
+                        28,
+                    )),
+                empty_node(solver_id.clone(), NodeKind::SmokeSolver, "Smoke Solver")
+                    .with_smoke_solver(SmokeSolverInput {
+                        steps: 40,
+                        frame_stride: 4,
+                        viscosity: 0.05,
+                        ground_collision: false,
+                        ..Default::default()
+                    }),
+                empty_node(root_id.clone(), NodeKind::SmokeRoot, "Smoke Root"),
+            ],
+            edges: vec![
+                Edge { from: domain_id.clone(), to: source_id.clone() },
+                Edge { from: source_id.clone(), to: collider_id.clone() },
+                Edge { from: collider_id.clone(), to: solver_id.clone() },
+                Edge { from: solver_id.clone(), to: root_id.clone() },
+            ],
+        }
+    }
+
+    /// Liquid inflow deflected by an inclined ramp mesh SDF.
+    pub fn liquid_ramp_preset() -> Self {
+        let domain_id = NodeId("liquid_domain".into());
+        let source_id = NodeId("liquid_source".into());
+        let collider_id = NodeId("liquid_collider".into());
+        let solver_id = NodeId("liquid_solver".into());
+        let root_id = NodeId("liquid_root".into());
+
+        Self {
+            name: "Liquid Ramp".into(),
+            nodes: vec![
+                empty_node(domain_id.clone(), NodeKind::LiquidDomain, "Liquid Domain")
+                    .with_liquid_domain(LiquidDomainInput {
+                        resolution: 20,
+                        bounds_min: Vec3::new(-4.0, 0.0, -4.0),
+                        bounds_max: Vec3::new(4.0, 4.0, 4.0),
+                        seed: 77,
+                        initial_particles: 200,
+                        particle_radius: 0.1,
+                    }),
+                empty_node(source_id.clone(), NodeKind::LiquidSource, "Inflow")
+                    .with_liquid_source(LiquidSourceInput {
+                        position: Vec3::new(-2.5, 2.5, -2.0),
+                        radius: 0.45,
+                        emission_rate: 10.0,
+                        velocity: Vec3::new(1.5, -0.5, 1.0),
+                        active_until_step: 60,
+                    }),
+                empty_node(collider_id.clone(), NodeKind::LiquidCollider, "Ramp Collider")
+                    .with_liquid_collider(ColliderInput::ramp(
+                        Vec3::new(0.5, 0.0, 0.5),
+                        3.0,
+                        0.55,
+                        3.0,
+                        26,
+                    )),
+                empty_node(solver_id.clone(), NodeKind::LiquidSolver, "Liquid Solver")
+                    .with_liquid_solver(LiquidSolverInput {
+                        steps: 60,
+                        frame_stride: 3,
+                        gravity: 9.8,
+                        flip_ratio: 0.95,
+                        viscosity: 0.06,
+                        pressure_iterations: 20,
+                        max_particles: 14000,
+                        ..Default::default()
                     }),
                 empty_node(root_id.clone(), NodeKind::LiquidRoot, "Liquid Surface"),
             ],
@@ -1048,6 +1154,22 @@ mod tests {
         let colliders = colliders_from_graph(&Graph::smoke_puff_preset());
         assert_eq!(colliders.len(), 1);
         assert!(colliders[0].enabled);
+    }
+
+    #[test]
+    fn smoke_sphere_mesh_preset_cooks() {
+        let graph = Graph::smoke_sphere_preset();
+        let result = cook_graph(&graph).expect("cook smoke sphere");
+        assert!(result.smoke_max_density.unwrap_or(0.0) > 0.0);
+        let mesh = crate::viewport::cook_viewport_mesh(&graph).expect("viewport");
+        assert!(mesh.colliders[0].lines.len() > 24);
+    }
+
+    #[test]
+    fn liquid_ramp_mesh_preset_cooks() {
+        let graph = Graph::liquid_ramp_preset();
+        let result = cook_graph(&graph).expect("cook liquid ramp");
+        assert!(result.liquid_particle_count.unwrap_or(0) > 0);
     }
 
     #[test]

@@ -345,12 +345,16 @@ pub fn apply_edits(graph: &Graph, edits: &[GraphEdit]) -> Graph {
                     result = Graph::smoke_puff_preset();
                 } else if preset_id == "smoke_viscous" {
                     result = Graph::smoke_viscous_preset();
+                } else if preset_id == "smoke_sphere" {
+                    result = Graph::smoke_sphere_preset();
                 } else if preset_id == "ocean_patch" {
                     result = Graph::ocean_patch_preset();
                 } else if preset_id == "waterfall" {
                     result = Graph::waterfall_preset();
                 } else if preset_id == "flood_basin" {
                     result = Graph::flood_basin_preset();
+                } else if preset_id == "liquid_ramp" {
+                    result = Graph::liquid_ramp_preset();
                 }
             }
             GraphEdit::SetBuildingParams { node_id, params } => {

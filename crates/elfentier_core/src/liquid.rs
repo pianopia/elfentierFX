@@ -1,7 +1,8 @@
 //! FLIP-style particle–grid liquid solver (pure Rust, realtime-friendly).
 
 use crate::collider::{
-    apply_colliders_liquid_grid, resolve_particle_colliders, ColliderInput,
+    apply_colliders_liquid_grid_resolved, resolve_colliders, resolve_particle_colliders_resolved,
+    ColliderInput,
 };
 use crate::mesh::Vec3;
 use serde::{Deserialize, Serialize};
@@ -216,6 +217,7 @@ pub fn simulate_liquid(
     let max_particles = solver.max_particles.clamp(256, 32000) as usize;
     let mut frames = Vec::new();
     let mut rng = LcgRng::new(domain.seed.wrapping_add(0x4C51_0001));
+    let resolved_colliders = resolve_colliders(colliders);
 
     push_liquid_frame(&particles, domain, &mut frames, solver);
     let mut max_speed = 0.0_f32;
@@ -237,7 +239,7 @@ pub fn simulate_liquid(
         apply_terrain_collision(&mut g, solver.terrain_height);
         apply_box_collision(&mut g);
         let vs = g.voxel_size();
-        apply_colliders_liquid_grid(
+        apply_colliders_liquid_grid_resolved(
             g.nx,
             g.ny,
             g.nz,
@@ -248,7 +250,7 @@ pub fn simulate_liquid(
             &mut g.vel_x,
             &mut g.vel_y,
             &mut g.vel_z,
-            colliders,
+            &resolved_colliders,
         );
         project_pressure(&mut g, solver.pressure_iterations);
 
@@ -264,11 +266,11 @@ pub fn simulate_liquid(
         advect_particles(&mut particles, dt);
         clamp_particles_to_domain(&mut particles, domain);
         for p in particles.iter_mut() {
-            resolve_particle_colliders(
+            resolve_particle_colliders_resolved(
                 &mut p.pos,
                 &mut p.vel,
                 domain.particle_radius,
-                colliders,
+                &resolved_colliders,
             );
         }
         cull_excess(&mut particles, max_particles);

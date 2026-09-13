@@ -45,9 +45,19 @@ Building → city workflow plus smoke/gas:
 Vertical slice on top of Phase 1 (not production multiphase):
 
 - **Viscosity** — `viscosity` on `SmokeSolver` (velocity diffusion) and `LiquidSolver` (grid Laplacian damp). Presets: **薄い煙** (`smoke_puff`, low viscosity) vs **ねっとり** (`smoke_viscous`); **水** (ocean/waterfall) vs **とろみ** (flood basin, higher viscosity).
-- **Collision** — `SmokeCollider` / `LiquidCollider` nodes (static AABB box) wired between source and solver. Solids zero inward velocity; optional `kill_inside` clears smoke density / pushes liquid particles out. Floor/wall colliders are included in ocean, waterfall, flood, and smoke puff presets.
-- **Viewport** — collider AABB wireframes (amber lines) overlay the wgpu preview during cook.
-- **Limits** — single static AABB per collider node; no mesh SDF or moving colliders yet. Documented in agent API.
+- **Collision (Phase 2)** — `SmokeCollider` / `LiquidCollider` nodes with static **AABB** mode. Solids zero inward velocity; optional `kill_inside` clears smoke density / pushes liquid particles out. Floor/wall colliders are included in ocean, waterfall, flood, and smoke puff presets.
+- **Viewport** — collider wireframes (AABB box or mesh triangle edges) overlay the wgpu preview during cook.
+
+### Fluids Phase 2.5 — mesh SDF colliders
+
+Extends Phase 2 AABB colliders with voxelized **mesh SDF** mode on the same `ColliderInput` node:
+
+- **Mode** — `mode: "aabb"` (default, backward compatible) or `mode: "mesh_sdf"`.
+- **Procedural meshes** — `mesh_kind`: `box`, `sphere`, `torus`, `ramp` with `position`, `rotation_y`, `scale`, and `mesh_resolution` (8–96 voxels per axis).
+- **SDF build** — dense `f32` grid from triangle mesh (unsigned distance + ray-parity sign). Good enough for smoke velocity/density blocking and FLIP particle projection; not a full narrow-band / OpenVDB level-set pipeline.
+- **Accuracy limits** — curved surfaces stair-step at voxel size; thin geometry smaller than a voxel may be missed; concavities slightly rounded. Increase `mesh_resolution` for tighter fits.
+- **Presets** — `smoke_sphere` (smoke wrapping a sphere obstacle), `liquid_ramp` (inflow deflected by an inclined ramp).
+- **Tests** — unit tests on box/sphere SDF sign; smoke density clearing and particle push-out against mesh SDF.
 
 **Alpha 2 (OpenVDB I/O spike):** smoke graphs export an optional `smoke_density.vdb` fog FloatGrid (last frame) alongside `.evol` / atlas payloads. Reading uses `vdb-rs`; writing is a pure-Rust minimal encoder (uncompressed active-mask). Open `.vdb` in standard OpenVDB readers and tools. Unity users install **[Unity Volume Importer](https://github.com/pianopia/UnityVolumeImporter)** (`com.louddin.unity-volume-importer`) for legacy `.evol` in-editor import — native `.vdb` there remains on that product's roadmap.
 

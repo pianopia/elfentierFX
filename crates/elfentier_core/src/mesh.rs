@@ -4,7 +4,7 @@ use crate::buffer::Buffer;
 use serde::{Deserialize, Serialize};
 
 /// Three-component vector for positions and directions.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
 pub struct Vec3 {
     pub x: f32,
     pub y: f32,

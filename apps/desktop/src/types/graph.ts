@@ -74,12 +74,21 @@ export interface SmokeSolverInput {
   max_particles_per_frame: number;
 }
 
+export type ColliderMode = "aabb" | "mesh_sdf";
+export type ColliderMeshKind = "box" | "sphere" | "torus" | "ramp";
+
 export interface ColliderInput {
   enabled: boolean;
+  mode?: ColliderMode;
   bounds_min: Vec3;
   bounds_max: Vec3;
   bounce: number;
   kill_inside: boolean;
+  mesh_kind?: ColliderMeshKind;
+  mesh_resolution?: number;
+  position?: Vec3;
+  rotation_y?: number;
+  scale?: Vec3;
 }
 
 export interface LiquidDomainInput {
