@@ -251,6 +251,25 @@ export interface LiquidExportResult {
   format: string;
 }
 
+export interface ExportPayloadEntry {
+  format: string;
+  path: string;
+  frame_count?: number;
+  byte_len?: number;
+  vertex_count?: number;
+  triangle_count?: number;
+  bounds_min?: [number, number, number];
+  bounds_max?: [number, number, number];
+  resolution?: [number, number, number];
+}
+
+export interface ExportBundleResult {
+  directory: string;
+  manifest_path: string;
+  payload_count: number;
+  payloads: ExportPayloadEntry[];
+}
+
 export type PlacementMode = "along_path" | "grid";
 
 export type PromptIntent =

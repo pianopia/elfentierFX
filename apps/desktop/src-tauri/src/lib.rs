@@ -2,12 +2,14 @@ mod wgpu_viewport;
 
 use elfentier_core::{
     agent::{
-        export_liquid_cache, export_smoke_density, get_preset, list_presets, set_liquid_params,
-        set_params, set_smoke_params, PresetInfo, SetLiquidParamsRequest, SetSmokeParamsRequest,
+        export_cook_bundle_command, export_liquid_cache, export_smoke_density, get_preset,
+        list_presets, set_liquid_params, set_params, set_smoke_params, PresetInfo,
+        SetLiquidParamsRequest, SetSmokeParamsRequest,
     },
     building::BuildingParams,
     core_version, create_box_mesh,
     explain::explain_graph,
+    export::ExportBundleResult,
     graph::{cook_and_export, cook_graph, Graph},
     prompt::{apply_prompt, ApplyPromptResult},
     liquid::LiquidExportResult,
@@ -89,6 +91,12 @@ struct ExportSmokeRequest {
 struct ExportLiquidRequest {
     graph: Graph,
     path: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ExportBundleRequest {
+    graph: Graph,
+    path: Option<String>,
 }
 
 #[tauri::command]
@@ -239,6 +247,13 @@ fn export_liquid_cache_command(request: ExportLiquidRequest) -> Result<LiquidExp
 }
 
 #[tauri::command]
+fn export_cook_bundle_command_handler(
+    request: ExportBundleRequest,
+) -> Result<ExportBundleResult, String> {
+    export_cook_bundle_command(&request.graph, request.path.as_deref())
+}
+
+#[tauri::command]
 fn apply_prompt_command(request: ApplyPromptRequest) -> Result<ApplyPromptResult, String> {
     Ok(apply_prompt(&request.graph, &request.prompt))
 }
@@ -277,6 +292,7 @@ pub fn run() {
             export_gltf,
             export_smoke_density_command,
             export_liquid_cache_command,
+            export_cook_bundle_command_handler,
             apply_prompt_command,
             explain_graph_command,
             load_preset,

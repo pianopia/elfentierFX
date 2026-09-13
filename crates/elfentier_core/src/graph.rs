@@ -593,13 +593,18 @@ pub fn evaluate_smoke_volume(graph: &Graph) -> Result<SmokeVolume, String> {
 
 /// Evaluates the graph, merges instanced geometry, and exports glTF.
 pub fn cook_and_export(graph: &Graph, path: &str) -> Result<crate::export::ExportResult, String> {
-    if graph_mode(graph) == GraphMode::Smoke {
-        return Err(
+    match graph_mode(graph) {
+        GraphMode::Smoke => Err(
             "glTF export is for city mesh graphs; use export_smoke_density for smoke".into(),
-        );
+        ),
+        GraphMode::Liquid => Err(
+            "glTF export is for city mesh graphs; use export_liquid_cache for liquid".into(),
+        ),
+        GraphMode::City => {
+            let city = evaluate_city(graph)?;
+            export_glb(&city.mesh, path).map_err(|e| e.to_string())
+        }
     }
-    let city = evaluate_city(graph)?;
-    export_glb(&city.mesh, path).map_err(|e| e.to_string())
 }
 
 fn evaluate_city(graph: &Graph) -> Result<CityOutput, String> {

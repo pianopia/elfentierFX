@@ -10,6 +10,7 @@ import type {
   NativePreviewImage,
   NativeViewportCamera,
   LiquidExportResult,
+  ExportBundleResult,
   SmokeExportResult,
   ViewportMesh,
 } from "./types/graph";
@@ -41,6 +42,7 @@ function App() {
   const [exportResult, setExportResult] = useState<ExportResult | null>(null);
   const [smokeExportResult, setSmokeExportResult] = useState<SmokeExportResult | null>(null);
   const [liquidExportResult, setLiquidExportResult] = useState<LiquidExportResult | null>(null);
+  const [bundleExportResult, setBundleExportResult] = useState<ExportBundleResult | null>(null);
   const [promptSummary, setPromptSummary] = useState("");
   const [explainText, setExplainText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -112,6 +114,7 @@ function App() {
         setExportResult(null);
         setSmokeExportResult(null);
         setLiquidExportResult(null);
+        setBundleExportResult(null);
         setPromptSummary("");
         setStatus(`${label} loaded`);
         refreshExplain(nextPreset);
@@ -231,6 +234,27 @@ function App() {
     }
   }, [isLiquidGraph, isSmokeGraph]);
 
+  const handleExportBundle = useCallback(async () => {
+    const current = graphRef.current;
+    if (!current) {
+      setStatus("No graph to export");
+      return;
+    }
+    setBusy(true);
+    setStatus("Exporting cook bundle…");
+    try {
+      const result = await agentApi.exportCookBundle(current);
+      setBundleExportResult(result);
+      setStatus(
+        `Exported bundle → ${result.directory} · ${result.payload_count} payloads · manifest ${result.manifest_path}`,
+      );
+    } catch (error) {
+      setStatus(`Bundle export failed: ${String(error)}`);
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
   const handlePrompt = useCallback(
     async (prompt: string) => {
       const current = graphRef.current;
@@ -251,6 +275,7 @@ function App() {
         setExportResult(null);
         setSmokeExportResult(null);
         setLiquidExportResult(null);
+        setBundleExportResult(null);
         setStatus(result.summary || "Prompt applied");
         refreshExplain(result.graph);
       } catch (error) {
@@ -352,6 +377,14 @@ function App() {
           <button type="button" className="action-button" onClick={handleExport} disabled={busy}>
             {isLiquidGraph ? "Export liquid" : isSmokeGraph ? "Export smoke" : "Export glTF"}
           </button>
+          <button
+            type="button"
+            className="action-button secondary"
+            onClick={handleExportBundle}
+            disabled={busy}
+          >
+            Export Bundle
+          </button>
           {cookResult && (
             <span className="mesh-stats">
               {cookResult.liquid_particle_count != null && cookResult.liquid_particle_count > 0
@@ -374,6 +407,11 @@ function App() {
           {liquidExportResult && (
             <span className="export-path" title={liquidExportResult.path}>
               liquid exported
+            </span>
+          )}
+          {bundleExportResult && (
+            <span className="export-path" title={bundleExportResult.directory}>
+              bundle exported
             </span>
           )}
         </div>

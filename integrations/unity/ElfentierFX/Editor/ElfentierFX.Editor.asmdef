@@ -1,0 +1,16 @@
+{
+  "name": "ElfentierFX.Editor",
+  "rootNamespace": "ElfentierFX.Editor",
+  "references": [
+    "ElfentierFX.Runtime"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}
