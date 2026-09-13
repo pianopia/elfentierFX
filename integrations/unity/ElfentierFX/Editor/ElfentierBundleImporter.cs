@@ -7,11 +7,6 @@ namespace ElfentierFX.Editor
 {
     public static class ElfentierBundleImporter
     {
-        /// <summary>
-        /// Optional hook registered by ElfentierFX.OpenVDB for <c>volume_texture.evol</c> playback.
-        /// </summary>
-        public static System.Action<string, ExportManifest, GameObject> VolumeImportHandler;
-
         const string MenuPath = "ElfentierFX/Import Export Bundle…";
 
         [MenuItem(MenuPath)]
@@ -104,12 +99,9 @@ namespace ElfentierFX.Editor
             var marker = new GameObject("smoke_atlas");
             marker.transform.SetParent(parent, false);
             Debug.Log(
-                $"[ElfentierFX] Smoke XY atlas at {atlasPath} frames={payload?.FrameCount}. Use OpenVDB package for 3D volume playback.");
-
-            if (VolumeImportHandler != null)
-            {
-                VolumeImportHandler(bundleDirectory, manifest, parent.gameObject);
-            }
+                $"[ElfentierFX] Smoke XY atlas at {atlasPath} frames={payload?.FrameCount}. " +
+                "For 3D volume playback, install Unity Volume Importer (com.louddin.unity-volume-importer) " +
+                "and import volume_texture.evol from the bundle.");
         }
 
         static string Sanitize(string name)
