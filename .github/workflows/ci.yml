@@ -32,6 +32,9 @@ jobs:
       - name: Cargo check
         run: cargo check --workspace
 
+      - name: Core tests
+        run: cargo test -p elfentier_core
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
