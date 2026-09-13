@@ -1,16 +1,19 @@
 //! elfentierFX core library — procedural graph and mesh primitives.
 //!
-//! Alpha 0 exposes a minimal API for host integration. OpenVDB and fluid solvers
-//! will be added via FFI in later milestones.
+//! Alpha 1 adds building generation, placement, graph cook, and glTF export.
 
 pub mod buffer;
+pub mod building;
+pub mod export;
 pub mod graph;
 pub mod mesh;
+pub mod placement;
 
+use mesh::create_unit_box_mesh;
 use serde::{Deserialize, Serialize};
 
 /// Semantic version of the core library.
-pub const CORE_VERSION: &str = "0.1.0-alpha.0";
+pub const CORE_VERSION: &str = "0.1.0-alpha.1";
 
 /// Returns the core library version string.
 pub fn core_version() -> &'static str {
@@ -25,25 +28,29 @@ pub struct MeshStats {
     pub triangle_count: u32,
 }
 
-/// Creates a unit cube mesh (centered at origin, edge length 1).
-///
-/// Alpha 0 returns counts only; vertex/index buffers are stubbed for later.
-pub fn create_box_mesh() -> MeshStats {
-    // Unit cube: 8 unique vertices, 12 triangles (36 indices).
-    MeshStats {
-        vertex_count: 8,
-        index_count: 36,
-        triangle_count: 12,
+impl From<&mesh::Mesh> for MeshStats {
+    fn from(mesh: &mesh::Mesh) -> Self {
+        Self {
+            vertex_count: mesh.vertex_count(),
+            index_count: mesh.index_count(),
+            triangle_count: mesh.triangle_count(),
+        }
     }
+}
+
+/// Creates a unit cube mesh (centered at origin, edge length 1).
+pub fn create_box_mesh() -> MeshStats {
+    MeshStats::from(&create_unit_box_mesh())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use graph::Graph;
 
     #[test]
-    fn core_version_is_non_empty() {
-        assert!(!core_version().is_empty());
+    fn core_version_is_alpha_one() {
+        assert!(core_version().contains("alpha.1"));
     }
 
     #[test]
@@ -52,5 +59,13 @@ mod tests {
         assert_eq!(stats.vertex_count, 8);
         assert_eq!(stats.index_count, 36);
         assert_eq!(stats.triangle_count, 12);
+    }
+
+    #[test]
+    fn shop_street_preset_cooks() {
+        let graph = Graph::shop_street_preset();
+        let result = graph::cook_graph(&graph).expect("cook");
+        assert!(result.instance_count > 0);
+        assert!(result.vertex_count > 8);
     }
 }
