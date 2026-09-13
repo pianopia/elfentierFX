@@ -40,7 +40,7 @@ Building → city workflow plus smoke/gas:
 - **Export bundles** — manifest + payloads for Unity, Unreal, Blender (`Export Bundle` in UI)
 - **Agent API** — see [docs/agent-api.md](docs/agent-api.md) and [docs/export-formats.md](docs/export-formats.md)
 
-**Alpha 2 (OpenVDB I/O spike):** smoke graphs export an optional `smoke_density.vdb` fog FloatGrid (last frame) alongside `.evol` / atlas payloads. Reading uses `vdb-rs`; writing is a pure-Rust minimal encoder (uncompressed active-mask). Open `.vdb` in Houdini, Blender, or other OpenVDB tools. Unity users install **[Unity Volume Importer](https://github.com/pianopia/UnityVolumeImporter)** (`com.louddin.unity-volume-importer`) for legacy `.evol` in-editor import — native `.vdb` there remains on that product's roadmap.
+**Alpha 2 (OpenVDB I/O spike):** smoke graphs export an optional `smoke_density.vdb` fog FloatGrid (last frame) alongside `.evol` / atlas payloads. Reading uses `vdb-rs`; writing is a pure-Rust minimal encoder (uncompressed active-mask). Open `.vdb` in standard OpenVDB readers and tools. Unity users install **[Unity Volume Importer](https://github.com/pianopia/UnityVolumeImporter)** (`com.louddin.unity-volume-importer`) for legacy `.evol` in-editor import — native `.vdb` there remains on that product's roadmap.
 
 OpenVDB is a trademark of LF Projects, LLC.
 

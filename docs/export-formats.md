@@ -139,7 +139,7 @@ Standard OpenVDB `.vdb` archive containing a `Tree_float_5_4_3` FloatGrid named 
 | Units | Meters via `ScaleTranslateMap` transform |
 
 - Smoke graphs only (`smoke_density.vdb` in bundles)
-- Readable in Houdini, Blender (OpenVDB), `vdb-rs`, and other OpenVDB-compatible viewers
+- Readable by `vdb-rs` and other standard OpenVDB-compatible tools
 - Unity: native `.vdb` is not imported by the in-repo ElfentierFX bundle plugin; use external tools or emit `.evol` for **[Unity Volume Importer](https://github.com/pianopia/UnityVolumeImporter)** (`com.louddin.unity-volume-importer`)
 
 OpenVDB is a trademark of LF Projects, LLC.
