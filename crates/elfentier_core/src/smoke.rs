@@ -1,6 +1,6 @@
 //! Lightweight Eulerian smoke/gas solver (pure Rust). OpenVDB export via `openvdb_io`.
 
-use crate::collider::{apply_colliders_smoke, ColliderInput};
+use crate::collider::{apply_colliders_smoke_resolved, resolve_colliders, ColliderInput};
 use crate::mesh::Vec3;
 use serde::{Deserialize, Serialize};
 
@@ -211,6 +211,7 @@ pub fn simulate_smoke(
     let mut frames = Vec::new();
     let mut density_grids = Vec::new();
     let mut rng = LcgRng::new(domain.seed.wrapping_add(0x5A4B_0001));
+    let resolved_colliders = resolve_colliders(colliders);
 
     emit_sources(&mut grid, sources, &mut rng);
     push_frame(&grid, solver, &mut frames, &mut density_grids, &mut rng);
@@ -233,7 +234,7 @@ pub fn simulate_smoke(
         }
         apply_box_collision(&mut grid);
         let vs = grid.voxel_size();
-        apply_colliders_smoke(
+        apply_colliders_smoke_resolved(
             grid.nx,
             grid.ny,
             grid.nz,
@@ -245,7 +246,7 @@ pub fn simulate_smoke(
             &mut grid.vel_y,
             &mut grid.vel_z,
             &mut grid.temperature,
-            colliders,
+            &resolved_colliders,
         );
         project_pressure(&mut grid, solver.pressure_iterations);
 
