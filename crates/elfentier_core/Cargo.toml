@@ -1,0 +1,10 @@
+[package]
+name = "elfentier_core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Core procedural graph and mesh API for elfentierFX"
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }

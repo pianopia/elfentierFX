@@ -1,0 +1,106 @@
+.app {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  height: 100%;
+  background:
+    radial-gradient(ellipse 80% 50% at 50% -20%, rgba(88, 120, 255, 0.12), transparent),
+    #0f1115;
+}
+
+.app-header {
+  padding: 1rem 1.25rem 0.75rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.brand-mark {
+  color: #6ea8ff;
+  font-size: 0.9rem;
+}
+
+.brand h1 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.brand-tag {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #8b93a7;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  padding: 0.15rem 0.45rem;
+}
+
+.brand-subtitle {
+  margin: 0.35rem 0 0;
+  font-size: 0.82rem;
+  color: #8b93a7;
+}
+
+.app-main {
+  min-height: 0;
+  padding: 0.75rem 1rem 0.5rem;
+}
+
+.app-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.55rem 1rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(0, 0, 0, 0.25);
+  font-size: 0.78rem;
+  color: #9aa3b5;
+}
+
+.status-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-shrink: 0;
+}
+
+.core-version {
+  font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+  color: #6ea8ff;
+}
+
+.mesh-stats {
+  font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+  color: #b8c0d0;
+}
+
+.action-button {
+  border: 1px solid rgba(110, 168, 255, 0.35);
+  background: rgba(110, 168, 255, 0.12);
+  color: #d8e6ff;
+  border-radius: 6px;
+  padding: 0.3rem 0.65rem;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.action-button:hover {
+  background: rgba(110, 168, 255, 0.2);
+  border-color: rgba(110, 168, 255, 0.55);
+}
+
+.action-button:active {
+  transform: translateY(1px);
+}
