@@ -9,6 +9,7 @@ Unity-oriented procedural DCC for game-ready advanced looks — node-based model
 | Layer | Technology |
 |-------|------------|
 | UI shell | Tauri 2 + React / Vite (React Flow node editor) |
+| 3D viewport | Three.js WebGPURenderer (WebGL fallback) + GPU instancing |
 | Core | Rust crate (`elfentier_core`); C++/OpenVDB via FFI later |
 | Platforms | macOS, Windows, Linux |
 
@@ -17,19 +18,20 @@ Unity-oriented procedural DCC for game-ready advanced looks — node-based model
 ```
 apps/desktop/          Tauri 2 desktop app (Rust host + React frontend)
 crates/elfentier_core/ Shared procedural core (building, placement, graph cook, export)
+docs/agent-api.md      JSON command surface for agents
 ```
 
-## Alpha 1 (current)
+## Alpha 2 (current)
 
-End-to-end **building → city** vertical slice:
+Extends Alpha 1 with a real-time viewport and AI-era workflow foundations:
 
-- **Building rule** — `BuildingParams` (floors, width, depth, window density, seed) generates a mesh with floor volume, facade window recesses, and roof cap
-- **Placement** — `PlaceAlongPath` and `FillGrid` produce instance transforms from a building recipe
-- **Graph nodes** — `BuildingParams`, `BuildingMesh`, `PlaceAlongPath`, `FillGrid`, `MergeInstances`, `CityRoot` wired in `elfentier_core`
-- **UI** — React Flow canvas with shop-street starter graph; tweak floors/seed/window density; **Cook** shows verts/tris/instance count; **Export glTF** writes a combined `.glb`
-- **Preset** — one-click **Shop → Street** loads a connected starter graph
+- **3D viewport** — resizable split: node graph + WebGPU-first preview with orbit/pan/zoom, studio lighting, ground grid, FPS/tri/draw-call chrome
+- **Instanced cook** — `cook` returns base mesh buffers + per-instance 4×4 matrices (efficient transfer; export still merges for glTF)
+- **Prompt bar** — local JP/EN interpreter maps phrases (`商店街`, `階数を5に`, `もっと窓`, `グリッド配置`) to graph edits without an API key
+- **Agent API** — `get_graph`, `set_params`, `cook`, `export_gltf`, `list_presets`, `apply_prompt`, `explain_graph` (see [docs/agent-api.md](docs/agent-api.md))
+- **Explain graph** — template summary of the current graph in the UI
 
-**Alpha 0** shipped the Tauri shell, empty canvas placeholder, and unit-box stub API.
+**Alpha 1** shipped building → city graph cook, React Flow editor, and glTF export.
 
 Fluids and OpenVDB remain on the roadmap.
 
@@ -56,12 +58,12 @@ From the repo root you can also run:
 cargo tauri dev --manifest-path apps/desktop/src-tauri/Cargo.toml
 ```
 
-### Alpha 1 quick path
+### Alpha 2 quick path
 
-1. Launch the app — the **Shop → Street** preset graph loads automatically
-2. Adjust **Floors**, **Seed**, or **Window density** on the Building Params node
-3. Click **Cook** — footer shows instance / vertex / triangle counts
-4. Click **Export glTF** — writes `/tmp/elfentier_city.glb` (combined instanced geometry)
+1. Launch the app — **Shop → Street** preset loads automatically
+2. Adjust **Floors**, **Seed**, or **Window density** on the Building Params node, or type a prompt (e.g. `階数を5に`)
+3. Click **Cook** — 3D viewport shows instanced buildings; footer shows stats
+4. Click **Export glTF** — writes `/tmp/elfentier_city.glb` (merged geometry)
 
 ## Build
 
@@ -77,7 +79,7 @@ cargo tauri build --manifest-path src-tauri/Cargo.toml
 # Check all Rust crates
 cargo check --workspace
 
-# Core unit tests (building mesh, placement math, graph cook, glTF export)
+# Core unit tests (building mesh, placement math, graph cook, glTF export, prompt, viewport)
 cargo test -p elfentier_core
 
 # Frontend typecheck only

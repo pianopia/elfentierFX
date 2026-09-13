@@ -1,0 +1,91 @@
+.prompt-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.prompt-form {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.prompt-input {
+  flex: 1;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: #e8ecf4;
+  border-radius: 6px;
+  padding: 0.45rem 0.65rem;
+  font-size: 0.85rem;
+}
+
+.prompt-input:focus {
+  outline: none;
+  border-color: rgba(110, 168, 255, 0.5);
+  box-shadow: 0 0 0 2px rgba(110, 168, 255, 0.12);
+}
+
+.prompt-submit {
+  border: 1px solid rgba(110, 168, 255, 0.4);
+  background: rgba(110, 168, 255, 0.15);
+  color: #d8e6ff;
+  border-radius: 6px;
+  padding: 0.45rem 0.85rem;
+  cursor: pointer;
+  font-size: 0.82rem;
+}
+
+.prompt-submit:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.prompt-hints {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.prompt-hint {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  color: #9aa3b5;
+  border-radius: 999px;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.prompt-hint:hover:not(:disabled) {
+  background: rgba(110, 168, 255, 0.1);
+  border-color: rgba(110, 168, 255, 0.3);
+  color: #c5d4f0;
+}
+
+.prompt-summary {
+  margin: 0;
+  font-size: 0.75rem;
+  color: #7ee8a2;
+}
+
+.prompt-explain {
+  font-size: 0.72rem;
+  color: #8b93a7;
+}
+
+.prompt-explain pre {
+  margin: 0.35rem 0 0;
+  white-space: pre-wrap;
+  font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+  font-size: 0.68rem;
+  color: #9aa3b5;
+  line-height: 1.45;
+}
+
+.prompt-explain summary {
+  cursor: pointer;
+  user-select: none;
+}

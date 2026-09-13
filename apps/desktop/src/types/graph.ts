@@ -65,11 +65,57 @@ export interface CookResult {
   graph_name: string;
 }
 
+export interface ViewportMesh {
+  positions: number[];
+  indices: number[];
+  instance_matrices: number[];
+  vertex_count: number;
+  index_count: number;
+  triangle_count: number;
+  instance_count: number;
+  graph_name: string;
+}
+
+export interface CookWithMeshResult {
+  stats: CookResult;
+  mesh: ViewportMesh;
+}
+
 export interface ExportResult {
   path: string;
   vertex_count: number;
   triangle_count: number;
   byte_len: number;
+}
+
+export type PlacementMode = "along_path" | "grid";
+
+export type PromptIntent =
+  | { type: "load_preset"; preset_id: string }
+  | { type: "set_floors"; floors: number }
+  | { type: "set_seed"; seed: number }
+  | { type: "adjust_windows"; delta: number }
+  | { type: "switch_placement"; mode: PlacementMode }
+  | { type: "set_graph_name"; name: string }
+  | { type: "unknown"; raw: string };
+
+export type GraphEdit =
+  | { type: "load_preset"; preset_id: string }
+  | { type: "set_building_params"; node_id: string; params: BuildingParams }
+  | { type: "switch_placement"; mode: PlacementMode }
+  | { type: "set_graph_name"; name: string };
+
+export interface ApplyPromptResult {
+  graph: Graph;
+  intents: PromptIntent[];
+  edits: GraphEdit[];
+  summary: string;
+}
+
+export interface PresetInfo {
+  id: string;
+  name: string;
+  description: string;
 }
 
 export const NODE_KIND_LABELS: Record<NodeKind, string> = {
