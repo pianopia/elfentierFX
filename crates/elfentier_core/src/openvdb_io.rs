@@ -718,6 +718,7 @@ mod tests {
                 frame_stride: 3,
                 ..Default::default()
             },
+            &[],
         );
         let path = std::env::temp_dir().join("elfentier_test_smoke.vdb");
         let path_str = path.to_string_lossy().to_string();
@@ -760,6 +761,7 @@ mod tests {
                 frame_stride: 2,
                 ..Default::default()
             },
+            &[],
         );
         let path = std::env::temp_dir().join("elfentier_test_info.vdb");
         let path_str = path.to_string_lossy().to_string();

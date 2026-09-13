@@ -7,10 +7,12 @@ export type NodeKind =
   | "city_root"
   | "smoke_domain"
   | "smoke_source"
+  | "smoke_collider"
   | "smoke_solver"
   | "smoke_root"
   | "liquid_domain"
   | "liquid_source"
+  | "liquid_collider"
   | "liquid_solver"
   | "liquid_root";
 
@@ -66,9 +68,18 @@ export interface SmokeSolverInput {
   dissipation: number;
   buoyancy: number;
   diffusion: number;
+  viscosity: number;
   pressure_iterations: number;
   ground_collision: boolean;
   max_particles_per_frame: number;
+}
+
+export interface ColliderInput {
+  enabled: boolean;
+  bounds_min: Vec3;
+  bounds_max: Vec3;
+  bounce: number;
+  kill_inside: boolean;
 }
 
 export interface LiquidDomainInput {
@@ -111,9 +122,11 @@ export interface GraphNode {
   smoke_domain?: SmokeDomainInput | null;
   smoke_source?: SmokeSourceInput | null;
   smoke_solver?: SmokeSolverInput | null;
+  smoke_collider?: ColliderInput | null;
   liquid_domain?: LiquidDomainInput | null;
   liquid_source?: LiquidSourceInput | null;
   liquid_solver?: LiquidSolverInput | null;
+  liquid_collider?: ColliderInput | null;
 }
 
 export interface GraphEdge {
@@ -217,6 +230,12 @@ export interface CookWithMeshResult {
   native_preview_error?: string | null;
 }
 
+export interface ViewportColliderWireframe {
+  bounds_min: [number, number, number];
+  bounds_max: [number, number, number];
+  lines: number[];
+}
+
 export interface ViewportMesh {
   positions: number[];
   indices: number[];
@@ -228,6 +247,7 @@ export interface ViewportMesh {
   graph_name: string;
   smoke?: ViewportSmoke | null;
   liquid?: ViewportLiquid | null;
+  colliders?: ViewportColliderWireframe[];
 }
 
 export interface ExportResult {
@@ -321,6 +341,7 @@ export interface SetSmokeParamsRequest {
   domain?: SmokeDomainInput | null;
   source?: SmokeSourceInput | null;
   solver?: SmokeSolverInput | null;
+  collider?: ColliderInput | null;
 }
 
 export interface SetLiquidParamsRequest {
@@ -328,6 +349,7 @@ export interface SetLiquidParamsRequest {
   domain?: LiquidDomainInput | null;
   source?: LiquidSourceInput | null;
   solver?: LiquidSolverInput | null;
+  collider?: ColliderInput | null;
 }
 
 export const NODE_KIND_LABELS: Record<NodeKind, string> = {
@@ -339,10 +361,12 @@ export const NODE_KIND_LABELS: Record<NodeKind, string> = {
   city_root: "City Root",
   smoke_domain: "Smoke Domain",
   smoke_source: "Smoke Source",
+  smoke_collider: "Smoke Collider",
   smoke_solver: "Smoke Solver",
   smoke_root: "Smoke Root",
   liquid_domain: "Liquid Domain",
   liquid_source: "Liquid Source",
+  liquid_collider: "Liquid Collider",
   liquid_solver: "Liquid Solver",
   liquid_root: "Liquid Surface",
 };
@@ -356,10 +380,12 @@ export const NODE_KIND_COLORS: Record<NodeKind, string> = {
   city_root: "#e8e8e8",
   smoke_domain: "#9ad4ff",
   smoke_source: "#ffd166",
+  smoke_collider: "#f4a261",
   smoke_solver: "#b8f2e6",
   smoke_root: "#f5f5f5",
   liquid_domain: "#5ec8e8",
   liquid_source: "#4da6ff",
+  liquid_collider: "#e9c46a",
   liquid_solver: "#7ad4f0",
   liquid_root: "#e8f8ff",
 };

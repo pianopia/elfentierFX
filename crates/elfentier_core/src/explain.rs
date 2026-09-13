@@ -72,11 +72,24 @@ pub fn explain_graph(graph: &Graph) -> String {
         if let Some(node) = graph.nodes.iter().find(|n| n.kind == NodeKind::LiquidSolver) {
             let solver = node.liquid_solver.unwrap_or_default();
             lines.push(format!(
-                "Liquid solver — {} steps, gravity {:.1}, FLIP {:.0}%, wave {:.2}",
+                "Liquid solver — {} steps, gravity {:.1}, FLIP {:.0}%, viscosity {:.2}, wave {:.2}",
                 solver.steps,
                 solver.gravity,
                 solver.flip_ratio * 100.0,
+                solver.viscosity,
                 solver.wave_amplitude,
+            ));
+        }
+        if let Some(node) = graph.nodes.iter().find(|n| n.kind == NodeKind::LiquidCollider) {
+            let collider = node.liquid_collider.unwrap_or_default();
+            lines.push(format!(
+                "Liquid collider — AABB ({:.1},{:.1},{:.1})→({:.1},{:.1},{:.1})",
+                collider.bounds_min.x,
+                collider.bounds_min.y,
+                collider.bounds_min.z,
+                collider.bounds_max.x,
+                collider.bounds_max.y,
+                collider.bounds_max.z,
             ));
         }
     }
@@ -99,8 +112,20 @@ pub fn explain_graph(graph: &Graph) -> String {
         if let Some(node) = graph.nodes.iter().find(|n| n.kind == NodeKind::SmokeSolver) {
             let solver = node.smoke_solver.unwrap_or_default();
             lines.push(format!(
-                "Smoke solver — {} steps, buoyancy {:.1}, dissipation {:.3}",
-                solver.steps, solver.buoyancy, solver.dissipation,
+                "Smoke solver — {} steps, buoyancy {:.1}, dissipation {:.3}, viscosity {:.2}",
+                solver.steps, solver.buoyancy, solver.dissipation, solver.viscosity,
+            ));
+        }
+        if let Some(node) = graph.nodes.iter().find(|n| n.kind == NodeKind::SmokeCollider) {
+            let collider = node.smoke_collider.unwrap_or_default();
+            lines.push(format!(
+                "Smoke collider — AABB ({:.1},{:.1},{:.1})→({:.1},{:.1},{:.1})",
+                collider.bounds_min.x,
+                collider.bounds_min.y,
+                collider.bounds_min.z,
+                collider.bounds_max.x,
+                collider.bounds_max.y,
+                collider.bounds_max.z,
             ));
         }
     }

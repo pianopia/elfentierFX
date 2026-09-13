@@ -343,6 +343,8 @@ pub fn apply_edits(graph: &Graph, edits: &[GraphEdit]) -> Graph {
                     result = Graph::grid_block_preset();
                 } else if preset_id == "smoke_puff" {
                     result = Graph::smoke_puff_preset();
+                } else if preset_id == "smoke_viscous" {
+                    result = Graph::smoke_viscous_preset();
                 } else if preset_id == "ocean_patch" {
                     result = Graph::ocean_patch_preset();
                 } else if preset_id == "waterfall" {
@@ -461,9 +463,11 @@ fn switch_placement(graph: &Graph, mode: PlacementMode) -> Graph {
                 smoke_domain: None,
                 smoke_source: None,
                 smoke_solver: None,
+                smoke_collider: None,
                 liquid_domain: None,
                 liquid_source: None,
                 liquid_solver: None,
+                liquid_collider: None,
             });
             g.edges.push(crate::graph::Edge {
                 from: mesh_id.clone(),
@@ -495,9 +499,11 @@ fn switch_placement(graph: &Graph, mode: PlacementMode) -> Graph {
                 smoke_domain: None,
                 smoke_source: None,
                 smoke_solver: None,
+                smoke_collider: None,
                 liquid_domain: None,
                 liquid_source: None,
                 liquid_solver: None,
+                liquid_collider: None,
             });
             g.edges.push(crate::graph::Edge {
                 from: mesh_id.clone(),

@@ -9,6 +9,7 @@ use crate::placement::{
 use crate::liquid::{
     simulate_liquid, LiquidDomainInput, LiquidSolverInput, LiquidSourceInput, LiquidVolume,
 };
+use crate::collider::ColliderInput;
 use crate::smoke::{
     simulate_smoke, SmokeDomainInput, SmokeSolverInput, SmokeSourceInput, SmokeVolume,
 };
@@ -31,10 +32,12 @@ pub enum NodeKind {
     CityRoot,
     SmokeDomain,
     SmokeSource,
+    SmokeCollider,
     SmokeSolver,
     SmokeRoot,
     LiquidDomain,
     LiquidSource,
+    LiquidCollider,
     LiquidSolver,
     LiquidRoot,
 }
@@ -77,11 +80,15 @@ pub struct Node {
     #[serde(default)]
     pub smoke_solver: Option<SmokeSolverInput>,
     #[serde(default)]
+    pub smoke_collider: Option<ColliderInput>,
+    #[serde(default)]
     pub liquid_domain: Option<LiquidDomainInput>,
     #[serde(default)]
     pub liquid_source: Option<LiquidSourceInput>,
     #[serde(default)]
     pub liquid_solver: Option<LiquidSolverInput>,
+    #[serde(default)]
+    pub liquid_collider: Option<ColliderInput>,
 }
 
 /// Edge connecting an output port to an input port.
@@ -165,6 +172,7 @@ impl Graph {
     pub fn smoke_puff_preset() -> Self {
         let domain_id = NodeId("smoke_domain".into());
         let source_id = NodeId("smoke_source".into());
+        let collider_id = NodeId("smoke_collider".into());
         let solver_id = NodeId("smoke_solver".into());
         let root_id = NodeId("smoke_root".into());
 
@@ -175,13 +183,58 @@ impl Graph {
                     .with_smoke_domain(SmokeDomainInput::default()),
                 empty_node(source_id.clone(), NodeKind::SmokeSource, "Puff Source")
                     .with_smoke_source(SmokeSourceInput::default()),
+                empty_node(collider_id.clone(), NodeKind::SmokeCollider, "Floor Collider")
+                    .with_smoke_collider(ColliderInput::floor(0.35, 4.0)),
                 empty_node(solver_id.clone(), NodeKind::SmokeSolver, "Smoke Solver")
-                    .with_smoke_solver(SmokeSolverInput::default()),
+                    .with_smoke_solver(SmokeSolverInput {
+                        viscosity: 0.05,
+                        ..Default::default()
+                    }),
                 empty_node(root_id.clone(), NodeKind::SmokeRoot, "Smoke Root"),
             ],
             edges: vec![
                 Edge { from: domain_id.clone(), to: source_id.clone() },
-                Edge { from: source_id.clone(), to: solver_id.clone() },
+                Edge { from: source_id.clone(), to: collider_id.clone() },
+                Edge { from: collider_id.clone(), to: solver_id.clone() },
+                Edge { from: solver_id.clone(), to: root_id.clone() },
+            ],
+        }
+    }
+
+    /// Viscous smoke preset — ねっとり / thick motion.
+    pub fn smoke_viscous_preset() -> Self {
+        let domain_id = NodeId("smoke_domain".into());
+        let source_id = NodeId("smoke_source".into());
+        let collider_id = NodeId("smoke_collider".into());
+        let solver_id = NodeId("smoke_solver".into());
+        let root_id = NodeId("smoke_root".into());
+
+        Self {
+            name: "Smoke Viscous".into(),
+            nodes: vec![
+                empty_node(domain_id.clone(), NodeKind::SmokeDomain, "Smoke Domain")
+                    .with_smoke_domain(SmokeDomainInput::default()),
+                empty_node(source_id.clone(), NodeKind::SmokeSource, "Puff Source")
+                    .with_smoke_source(SmokeSourceInput {
+                        emission_rate: 3.2,
+                        upward_velocity: 1.8,
+                        ..Default::default()
+                    }),
+                empty_node(collider_id.clone(), NodeKind::SmokeCollider, "Floor Collider")
+                    .with_smoke_collider(ColliderInput::floor(0.35, 4.0)),
+                empty_node(solver_id.clone(), NodeKind::SmokeSolver, "Smoke Solver")
+                    .with_smoke_solver(SmokeSolverInput {
+                        viscosity: 0.42,
+                        diffusion: 0.22,
+                        buoyancy: 1.2,
+                        ..Default::default()
+                    }),
+                empty_node(root_id.clone(), NodeKind::SmokeRoot, "Smoke Root"),
+            ],
+            edges: vec![
+                Edge { from: domain_id.clone(), to: source_id.clone() },
+                Edge { from: source_id.clone(), to: collider_id.clone() },
+                Edge { from: collider_id.clone(), to: solver_id.clone() },
                 Edge { from: solver_id.clone(), to: root_id.clone() },
             ],
         }
@@ -191,6 +244,7 @@ impl Graph {
     pub fn ocean_patch_preset() -> Self {
         let domain_id = NodeId("liquid_domain".into());
         let source_id = NodeId("liquid_source".into());
+        let collider_id = NodeId("liquid_collider".into());
         let solver_id = NodeId("liquid_solver".into());
         let root_id = NodeId("liquid_root".into());
 
@@ -214,6 +268,8 @@ impl Graph {
                         velocity: Vec3::new(0.0, 0.0, 0.0),
                         active_until_step: 0,
                     }),
+                empty_node(collider_id.clone(), NodeKind::LiquidCollider, "Floor Collider")
+                    .with_liquid_collider(ColliderInput::floor(0.25, 8.0)),
                 empty_node(solver_id.clone(), NodeKind::LiquidSolver, "Liquid Solver")
                     .with_liquid_solver(LiquidSolverInput {
                         steps: 48,
@@ -231,7 +287,8 @@ impl Graph {
             ],
             edges: vec![
                 Edge { from: domain_id.clone(), to: source_id.clone() },
-                Edge { from: source_id.clone(), to: solver_id.clone() },
+                Edge { from: source_id.clone(), to: collider_id.clone() },
+                Edge { from: collider_id.clone(), to: solver_id.clone() },
                 Edge { from: solver_id.clone(), to: root_id.clone() },
             ],
         }
@@ -241,6 +298,7 @@ impl Graph {
     pub fn waterfall_preset() -> Self {
         let domain_id = NodeId("liquid_domain".into());
         let source_id = NodeId("liquid_source".into());
+        let collider_id = NodeId("liquid_collider".into());
         let solver_id = NodeId("liquid_solver".into());
         let root_id = NodeId("liquid_root".into());
 
@@ -264,6 +322,14 @@ impl Graph {
                         velocity: Vec3::new(0.0, -3.5, 0.0),
                         active_until_step: 0,
                     }),
+                empty_node(collider_id.clone(), NodeKind::LiquidCollider, "Basin Collider")
+                    .with_liquid_collider(ColliderInput {
+                        enabled: true,
+                        bounds_min: Vec3::new(-2.8, 0.0, -2.8),
+                        bounds_max: Vec3::new(2.8, 0.35, 2.8),
+                        bounce: 0.18,
+                        kill_inside: true,
+                    }),
                 empty_node(solver_id.clone(), NodeKind::LiquidSolver, "Liquid Solver")
                     .with_liquid_solver(LiquidSolverInput {
                         steps: 72,
@@ -281,7 +347,8 @@ impl Graph {
             ],
             edges: vec![
                 Edge { from: domain_id.clone(), to: source_id.clone() },
-                Edge { from: source_id.clone(), to: solver_id.clone() },
+                Edge { from: source_id.clone(), to: collider_id.clone() },
+                Edge { from: collider_id.clone(), to: solver_id.clone() },
                 Edge { from: solver_id.clone(), to: root_id.clone() },
             ],
         }
@@ -291,6 +358,7 @@ impl Graph {
     pub fn flood_basin_preset() -> Self {
         let domain_id = NodeId("liquid_domain".into());
         let source_id = NodeId("liquid_source".into());
+        let collider_id = NodeId("liquid_collider".into());
         let solver_id = NodeId("liquid_solver".into());
         let root_id = NodeId("liquid_root".into());
 
@@ -314,13 +382,21 @@ impl Graph {
                         velocity: Vec3::new(1.2, 0.3, 0.0),
                         active_until_step: 80,
                     }),
+                empty_node(collider_id.clone(), NodeKind::LiquidCollider, "Basin Walls")
+                    .with_liquid_collider(ColliderInput {
+                        enabled: true,
+                        bounds_min: Vec3::new(-4.8, 0.0, -4.8),
+                        bounds_max: Vec3::new(4.8, 0.4, 4.8),
+                        bounce: 0.1,
+                        kill_inside: true,
+                    }),
                 empty_node(solver_id.clone(), NodeKind::LiquidSolver, "Liquid Solver")
                     .with_liquid_solver(LiquidSolverInput {
                         steps: 90,
                         frame_stride: 3,
                         gravity: 9.8,
                         flip_ratio: 0.95,
-                        viscosity: 0.03,
+                        viscosity: 0.14,
                         pressure_iterations: 20,
                         wave_amplitude: 0.0,
                         wave_frequency: 0.0,
@@ -331,7 +407,8 @@ impl Graph {
             ],
             edges: vec![
                 Edge { from: domain_id.clone(), to: source_id.clone() },
-                Edge { from: source_id.clone(), to: solver_id.clone() },
+                Edge { from: source_id.clone(), to: collider_id.clone() },
+                Edge { from: collider_id.clone(), to: solver_id.clone() },
                 Edge { from: solver_id.clone(), to: root_id.clone() },
             ],
         }
@@ -349,9 +426,11 @@ fn empty_node(id: NodeId, kind: NodeKind, label: &str) -> Node {
         smoke_domain: None,
         smoke_source: None,
         smoke_solver: None,
+        smoke_collider: None,
         liquid_domain: None,
         liquid_source: None,
         liquid_solver: None,
+        liquid_collider: None,
     }
 }
 
@@ -386,6 +465,11 @@ impl Node {
         self
     }
 
+    fn with_smoke_collider(mut self, collider: ColliderInput) -> Self {
+        self.smoke_collider = Some(collider);
+        self
+    }
+
     fn with_liquid_domain(mut self, domain: LiquidDomainInput) -> Self {
         self.liquid_domain = Some(domain);
         self
@@ -398,6 +482,11 @@ impl Node {
 
     fn with_liquid_solver(mut self, solver: LiquidSolverInput) -> Self {
         self.liquid_solver = Some(solver);
+        self
+    }
+
+    fn with_liquid_collider(mut self, collider: ColliderInput) -> Self {
+        self.liquid_collider = Some(collider);
         self
     }
 }
@@ -445,12 +534,14 @@ enum NodeValue {
     SmokeSetup {
         domain: SmokeDomainInput,
         sources: Vec<SmokeSourceInput>,
+        colliders: Vec<ColliderInput>,
         solver: SmokeSolverInput,
     },
     SmokeVolume(SmokeVolume),
     LiquidSetup {
         domain: LiquidDomainInput,
         sources: Vec<LiquidSourceInput>,
+        colliders: Vec<ColliderInput>,
         solver: LiquidSolverInput,
     },
     LiquidVolume(LiquidVolume),
@@ -557,6 +648,19 @@ pub fn evaluate_city_instanced(graph: &Graph) -> Result<CityInstanced, String> {
         Some(_) => Err("CityRoot did not receive city output".into()),
         None => Err("CityRoot was not evaluated".into()),
     }
+}
+
+/// Collects collider inputs wired into a fluid graph (for viewport overlay).
+pub fn colliders_from_graph(graph: &Graph) -> Vec<ColliderInput> {
+    graph
+        .nodes
+        .iter()
+        .filter_map(|node| match node.kind {
+            NodeKind::SmokeCollider => node.smoke_collider,
+            NodeKind::LiquidCollider => node.liquid_collider,
+            _ => None,
+        })
+        .collect()
 }
 
 /// Evaluates a liquid graph and returns the simulated volume.
@@ -714,6 +818,7 @@ fn evaluate_node(
             Ok(NodeValue::SmokeSetup {
                 domain,
                 sources: Vec::new(),
+                colliders: Vec::new(),
                 solver: SmokeSolverInput::default(),
             })
         }
@@ -725,13 +830,26 @@ fn evaluate_node(
             Ok(NodeValue::SmokeSetup {
                 domain: setup.domain,
                 sources: setup.sources,
+                colliders: setup.colliders,
+                solver: setup.solver,
+            })
+        }
+        NodeKind::SmokeCollider => {
+            let mut setup = input_smoke_setup(inputs, cache)?;
+            if let Some(collider) = node.smoke_collider {
+                setup.colliders.push(collider);
+            }
+            Ok(NodeValue::SmokeSetup {
+                domain: setup.domain,
+                sources: setup.sources,
+                colliders: setup.colliders,
                 solver: setup.solver,
             })
         }
         NodeKind::SmokeSolver => {
             let setup = input_smoke_setup(inputs, cache)?;
             let solver = node.smoke_solver.clone().unwrap_or(setup.solver);
-            let volume = simulate_smoke(&setup.domain, &setup.sources, &solver);
+            let volume = simulate_smoke(&setup.domain, &setup.sources, &solver, &setup.colliders);
             Ok(NodeValue::SmokeVolume(volume))
         }
         NodeKind::SmokeRoot => {
@@ -749,6 +867,7 @@ fn evaluate_node(
             Ok(NodeValue::LiquidSetup {
                 domain,
                 sources: Vec::new(),
+                colliders: Vec::new(),
                 solver: LiquidSolverInput::default(),
             })
         }
@@ -760,13 +879,26 @@ fn evaluate_node(
             Ok(NodeValue::LiquidSetup {
                 domain: setup.domain,
                 sources: setup.sources,
+                colliders: setup.colliders,
+                solver: setup.solver,
+            })
+        }
+        NodeKind::LiquidCollider => {
+            let mut setup = input_liquid_setup(inputs, cache)?;
+            if let Some(collider) = node.liquid_collider {
+                setup.colliders.push(collider);
+            }
+            Ok(NodeValue::LiquidSetup {
+                domain: setup.domain,
+                sources: setup.sources,
+                colliders: setup.colliders,
                 solver: setup.solver,
             })
         }
         NodeKind::LiquidSolver => {
             let setup = input_liquid_setup(inputs, cache)?;
             let solver = node.liquid_solver.clone().unwrap_or(setup.solver);
-            let volume = simulate_liquid(&setup.domain, &setup.sources, &solver);
+            let volume = simulate_liquid(&setup.domain, &setup.sources, &solver, &setup.colliders);
             Ok(NodeValue::LiquidVolume(volume))
         }
         NodeKind::LiquidRoot => {
@@ -800,12 +932,14 @@ fn input_mesh(inputs: &[NodeId], cache: &HashMap<NodeId, NodeValue>) -> Result<M
 struct SmokeSetupAccum {
     domain: SmokeDomainInput,
     sources: Vec<SmokeSourceInput>,
+    colliders: Vec<ColliderInput>,
     solver: SmokeSolverInput,
 }
 
 struct LiquidSetupAccum {
     domain: LiquidDomainInput,
     sources: Vec<LiquidSourceInput>,
+    colliders: Vec<ColliderInput>,
     solver: LiquidSolverInput,
 }
 
@@ -814,10 +948,11 @@ fn input_liquid_setup(
     cache: &HashMap<NodeId, NodeValue>,
 ) -> Result<LiquidSetupAccum, String> {
     for id in inputs {
-        if let Some(NodeValue::LiquidSetup { domain, sources, solver }) = cache.get(id) {
+        if let Some(NodeValue::LiquidSetup { domain, sources, colliders, solver }) = cache.get(id) {
             return Ok(LiquidSetupAccum {
                 domain: *domain,
                 sources: sources.clone(),
+                colliders: colliders.clone(),
                 solver: *solver,
             });
         }
@@ -830,10 +965,11 @@ fn input_smoke_setup(
     cache: &HashMap<NodeId, NodeValue>,
 ) -> Result<SmokeSetupAccum, String> {
     for id in inputs {
-        if let Some(NodeValue::SmokeSetup { domain, sources, solver }) = cache.get(id) {
+        if let Some(NodeValue::SmokeSetup { domain, sources, colliders, solver }) = cache.get(id) {
             return Ok(SmokeSetupAccum {
                 domain: *domain,
                 sources: sources.clone(),
+                colliders: colliders.clone(),
                 solver: *solver,
             });
         }
@@ -898,6 +1034,20 @@ mod tests {
         let graph = Graph::flood_basin_preset();
         let result = cook_graph(&graph).expect("cook flood");
         assert!(result.liquid_frame_count.unwrap_or(0) >= 2);
+    }
+
+    #[test]
+    fn smoke_viscous_preset_cooks() {
+        let graph = Graph::smoke_viscous_preset();
+        let result = cook_graph(&graph).expect("cook viscous smoke");
+        assert!(result.smoke_max_density.unwrap_or(0.0) > 0.0);
+    }
+
+    #[test]
+    fn colliders_collected_from_smoke_graph() {
+        let colliders = colliders_from_graph(&Graph::smoke_puff_preset());
+        assert_eq!(colliders.len(), 1);
+        assert!(colliders[0].enabled);
     }
 
     #[test]

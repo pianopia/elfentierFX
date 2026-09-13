@@ -239,6 +239,7 @@ mod tests {
                 frame_stride: 4,
                 ..Default::default()
             },
+            &[],
         );
         assert!(!volume.density_frames().is_empty());
 
@@ -273,6 +274,7 @@ mod tests {
                 frame_stride: 2,
                 ..Default::default()
             },
+            &[],
         );
         let atlas = build_density_atlas_xy(&volume);
         assert!(atlas.iter().any(|&v| v > 0.0));

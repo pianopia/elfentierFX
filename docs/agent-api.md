@@ -16,8 +16,8 @@ JSON-serializable Tauri commands for external agents and the desktop UI. All com
 | `get_waterfall_preset` | — | `Graph` | Waterfall FLIP liquid starter |
 | `get_flood_basin_preset` | — | `Graph` | Flood basin FLIP liquid starter |
 | `set_params_command` | `{ request: { graph, node_id?, params } }` | `Graph` | Update `BuildingParams` on a node |
-| `set_smoke_params_command` | `{ request: SetSmokeParamsRequest }` | `Graph` | Update smoke domain/source/solver nodes |
-| `set_liquid_params_command` | `{ request: SetLiquidParamsRequest }` | `Graph` | Update liquid domain/source/solver nodes |
+| `set_smoke_params_command` | `{ request: SetSmokeParamsRequest }` | `Graph` | Update smoke domain/source/solver/**collider** nodes |
+| `set_liquid_params_command` | `{ request: SetLiquidParamsRequest }` | `Graph` | Update liquid domain/source/solver/**collider** nodes |
 | `cook` | `{ graph }` | `CookWithMeshResult` | Cook graph + viewport buffers + native wgpu preview (wgpu-only; failures surface as `native_preview_error`) |
 | `render_native_viewport_command` | `{ request: RenderNativeRequest }` | `NativePreviewImage` | Re-render mesh/smoke/liquid frame with camera (orbit/animation) |
 | `cook_city_graph` | `{ graph }` | `CookResult` | Stats only (legacy) |
@@ -31,7 +31,7 @@ JSON-serializable Tauri commands for external agents and the desktop UI. All com
 
 ### Preset ids
 
-`shop_street`, `grid_block`, `smoke_puff`, `ocean_patch`, `waterfall`, `flood_basin`
+`shop_street`, `grid_block`, `smoke_puff`, `smoke_viscous`, `ocean_patch`, `waterfall`, `flood_basin`
 
 ## Graph document
 
@@ -61,14 +61,20 @@ JSON-serializable Tauri commands for external agents and the desktop UI. All com
 
 **City:** `building_params`, `building_mesh`, `place_along_path`, `fill_grid`, `merge_instances`, `city_root`
 
-**Smoke:** `smoke_domain`, `smoke_source`, `smoke_solver`, `smoke_root`
+**Smoke:** `smoke_domain`, `smoke_source`, `smoke_collider`, `smoke_solver`, `smoke_root`
 
-**Liquid (FLIP Phase 1):** `liquid_domain`, `liquid_source`, `liquid_solver`, `liquid_root`
+**Liquid (FLIP Phase 1+2):** `liquid_domain`, `liquid_source`, `liquid_collider`, `liquid_solver`, `liquid_root`
+
+Smoke preset chain:
+
+```
+smoke_domain → smoke_source → smoke_collider → smoke_solver → smoke_root
+```
 
 Liquid preset chain:
 
 ```
-liquid_domain → liquid_source → liquid_solver → liquid_root
+liquid_domain → liquid_source → liquid_collider → liquid_solver → liquid_root
 ```
 
 ### Smoke params (on nodes)
@@ -105,11 +111,26 @@ liquid_domain → liquid_source → liquid_solver → liquid_root
   "dissipation": 0.985,
   "buoyancy": 1.6,
   "diffusion": 0.12,
+  "viscosity": 0.06,
   "pressure_iterations": 18,
   "ground_collision": true,
   "max_particles_per_frame": 1800
 }
 ```
+
+`smoke_collider` / `liquid_collider` (static AABB):
+
+```json
+{
+  "enabled": true,
+  "bounds_min": { "x": -4, "y": 0, "z": -4 },
+  "bounds_max": { "x": 4, "y": 0.35, "z": 4 },
+  "bounce": 0.12,
+  "kill_inside": true
+}
+```
+
+Phase 2 notes: colliders are axis-aligned boxes only (no mesh SDF). `viscosity` on smoke damps velocity; on liquid it thickens FLIP motion via grid Laplacian drag. Viewport cook returns `mesh.colliders[]` wireframe line lists for wgpu overlay.
 
 ### Liquid params (on nodes)
 
