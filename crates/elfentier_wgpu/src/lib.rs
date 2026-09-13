@@ -1,8 +1,10 @@
 //! Native wgpu offscreen viewport (Vulkan/Metal/DX12) for mesh + smoke volume raymarch previews.
 
+mod environment;
 mod smoke_density;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
+pub use elfentier_core::environment::{ViewportEnvironment, ViewportEnvironmentPreset};
 use elfentier_core::viewport::{ViewportLiquidFrame, ViewportMesh, ViewportSmokeFrame};
 use pollster::block_on;
 use serde::{Deserialize, Serialize};
@@ -1045,8 +1047,9 @@ pub fn render_native_viewport(
     width: u32,
     height: u32,
     camera: &NativeViewportCamera,
+    environment: &ViewportEnvironment,
 ) -> Result<NativePreviewImage, String> {
-    match block_on(render_wgpu(mesh, smoke_frame, width, height, camera)) {
+    match block_on(render_wgpu(mesh, smoke_frame, width, height, camera, environment)) {
         Ok(image) => Ok(image),
         Err(err) => Err(format!("wgpu render failed: {err}")),
     }
@@ -1556,12 +1559,202 @@ fn scale_smoke_sizes_for_screen(
     }
 }
 
+struct EnvGpuResources {
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    sampler: wgpu::Sampler,
+    uniform_buffer: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
+    bind_layout: wgpu::BindGroupLayout,
+    pipeline: wgpu::RenderPipeline,
+    enabled: bool,
+}
+
+fn create_env_gpu_resources(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    environment: &ViewportEnvironment,
+    camera: &NativeViewportCamera,
+    aspect: f32,
+    tan_half_fov: f32,
+) -> Result<EnvGpuResources, String> {
+    let env_enabled = environment.enabled
+        && environment.effective_preset() != ViewportEnvironmentPreset::FlatGray;
+    let env_map = environment::build_environment_map(environment)?;
+    let rgba_bytes = environment::pack_rgba16f(&env_map);
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("environment equirect"),
+        size: wgpu::Extent3d {
+            width: env_map.width,
+            height: env_map.height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba16Float,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        &rgba_bytes,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(env_map.width * 8),
+            rows_per_image: Some(env_map.height),
+        },
+        wgpu::Extent3d {
+            width: env_map.width,
+            height: env_map.height,
+            depth_or_array_layers: 1,
+        },
+    );
+    let view = texture.create_view(&Default::default());
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("environment sampler"),
+        address_mode_u: wgpu::AddressMode::Repeat,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        address_mode_w: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::FilterMode::Nearest,
+        ..Default::default()
+    });
+
+    let (forward, right, up) =
+        smoke_density::camera_basis(camera.eye, camera.target, camera.up);
+    let env_uniform = environment::build_env_uniform(
+        environment,
+        camera.eye,
+        forward,
+        right,
+        up,
+        aspect,
+        tan_half_fov,
+    );
+    let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("environment uniform"),
+        contents: bytemuck::bytes_of(&env_uniform),
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    });
+
+    let bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("environment bind layout"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
+    });
+
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("environment bind group"),
+        layout: &bind_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(&view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Sampler(&sampler),
+            },
+        ],
+    });
+
+    let bg_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("environment background shader"),
+        source: wgpu::ShaderSource::Wgsl(environment::BACKGROUND_SHADER.into()),
+    });
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("environment pipeline layout"),
+        bind_group_layouts: &[&bind_layout],
+        push_constant_ranges: &[],
+    });
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("environment background pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &bg_shader,
+            entry_point: Some("vs_main"),
+            buffers: &[],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &bg_shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth32Float,
+            depth_write_enabled: true,
+            depth_compare: wgpu::CompareFunction::Always,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    });
+
+    Ok(EnvGpuResources {
+        texture,
+        view,
+        sampler,
+        uniform_buffer,
+        bind_group,
+        bind_layout,
+        pipeline,
+        enabled: env_enabled,
+    })
+}
+
 async fn render_wgpu(
     mesh: &ViewportMesh,
     smoke_frame: u32,
     width: u32,
     height: u32,
     camera: &NativeViewportCamera,
+    environment: &ViewportEnvironment,
 ) -> Result<NativePreviewImage, String> {
     let w = width.max(64).min(1920);
     let h = height.max(64).min(1080);
@@ -1604,6 +1797,15 @@ async fn render_wgpu(
     };
 
     let tan_half_fov = (0.5 * camera.fov_y_deg.to_radians()).tan();
+    let aspect = w as f32 / h as f32;
+    let env_gpu = create_env_gpu_resources(
+        &device,
+        &queue,
+        environment,
+        camera,
+        aspect,
+        tan_half_fov,
+    )?;
     let proj_scale = h as f32 / (2.0 * tan_half_fov);
     let raw_smoke_count = mesh
         .smoke
@@ -2051,6 +2253,22 @@ async fn render_wgpu(
                 },
                 count: None,
             },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
         ],
     });
 
@@ -2244,7 +2462,6 @@ async fn render_wgpu(
         let max_density = density.iter().copied().fold(0.0_f32, f32::max).max(1e-5);
         let (forward, right, up) =
             smoke_density::camera_basis(camera.eye, camera.target, camera.up);
-        let aspect = w as f32 / h as f32;
         let tan_half_fov = (0.5 * camera.fov_y_deg.to_radians()).tan();
         let clear_rgb = [
             GPU_CLEAR_RGBA[0] as f32 / 255.0,
@@ -2265,6 +2482,7 @@ async fn render_wgpu(
             max_density,
             clear_rgb,
             temperature * 0.15,
+            environment,
         );
         let volume_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("volume uniform"),
@@ -2322,6 +2540,14 @@ async fn render_wgpu(
                     binding: 1,
                     resource: wgpu::BindingResource::TextureView(&density_view),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&env_gpu.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Sampler(&env_gpu.sampler),
+                },
             ],
         }))
     });
@@ -2357,6 +2583,12 @@ async fn render_wgpu(
             timestamp_writes: None,
             occlusion_query_set: None,
         });
+
+        if env_gpu.enabled {
+            pass.set_pipeline(&env_gpu.pipeline);
+            pass.set_bind_group(0, &env_gpu.bind_group, &[]);
+            pass.draw(0..3, 0..1);
+        }
 
         if let (Some(vb), Some(ib), Some(bg)) = (
             &mesh_vertex_buffer,
@@ -2475,6 +2707,64 @@ async fn render_wgpu(
     NativePreviewImage::from_rgba(w, h, rgba, "wgpu")
 }
 
+/// Returns true when the center region differs from corner background (smoke/mesh over env).
+pub fn preview_center_differs_from_corners(rgba: &[u8], width: u32, height: u32) -> bool {
+    if width < 8 || height < 8 || rgba.len() != width as usize * height as usize * 4 {
+        return false;
+    }
+    let luma_at = |x: u32, y: u32| -> f32 {
+        let i = (y * width + x) as usize * 4;
+        let px = &rgba[i..i + 4];
+        0.2126 * px[0] as f32 + 0.7152 * px[1] as f32 + 0.0722 * px[2] as f32
+    };
+    let corner = [
+        luma_at(2, 2),
+        luma_at(width - 3, 2),
+        luma_at(2, height - 3),
+        luma_at(width - 3, height - 3),
+    ];
+    let corner_mean = corner.iter().sum::<f32>() / corner.len() as f32;
+    let cx = width / 2;
+    let cy = height / 2;
+    let rx = width / 4;
+    let ry = height / 4;
+    let mut center_sum = 0.0f32;
+    let mut center_count = 0usize;
+    for y in (cy - ry)..(cy + ry) {
+        for x in (cx - rx)..(cx + rx) {
+            center_sum += luma_at(x, y);
+            center_count += 1;
+        }
+    }
+    let center_mean = center_sum / center_count.max(1) as f32;
+    (center_mean - corner_mean).abs() >= 6.0
+}
+
+/// Returns true when corner background pixels differ (not a flat gray fill).
+pub fn preview_background_has_variation(rgba: &[u8], width: u32, height: u32) -> bool {
+    if width < 4 || height < 4 || rgba.len() != width as usize * height as usize * 4 {
+        return false;
+    }
+    let sample = |x: u32, y: u32| -> [u8; 3] {
+        let i = (y * width + x) as usize * 4;
+        [rgba[i], rgba[i + 1], rgba[i + 2]]
+    };
+    let tl = sample(2, 2);
+    let tr = sample(width - 3, 2);
+    let bl = sample(2, height - 3);
+    let br = sample(width - 3, height - 3);
+    let mut max_delta = 0u8;
+    for a in [tl, tr, bl, br] {
+        for b in [tl, tr, bl, br] {
+            max_delta = max_delta
+                .max(a[0].abs_diff(b[0]))
+                .max(a[1].abs_diff(b[1]))
+                .max(a[2].abs_diff(b[2]));
+        }
+    }
+    max_delta >= 12
+}
+
 fn pad_density_volume_upload(density: &[f32], nx: u32, ny: u32, nz: u32) -> (Vec<u8>, u32) {
     let row_bytes = nx * 4;
     let aligned_row = wgpu::util::align_to(row_bytes, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
@@ -2499,6 +2789,14 @@ mod tests {
     use super::*;
     use elfentier_core::graph::Graph;
     use elfentier_core::viewport::cook_viewport_mesh;
+
+    fn legacy_env() -> ViewportEnvironment {
+        ViewportEnvironment::legacy_flat()
+    }
+
+    fn studio_env() -> ViewportEnvironment {
+        ViewportEnvironment::default()
+    }
 
     #[test]
     fn default_camera_is_finite() {
@@ -2625,7 +2923,8 @@ mod tests {
         let mesh = cook_viewport_mesh(&Graph::smoke_puff_preset()).expect("cook");
         let camera = default_camera_for_mesh(&mesh);
         let frame = default_smoke_preview_frame(&mesh);
-        let preview = render_native_viewport(&mesh, frame, 320, 240, &camera).expect("render");
+        let preview =
+            render_native_viewport(&mesh, frame, 320, 240, &camera, &legacy_env()).expect("render");
         let rgba = preview.decode_rgba().expect("decode");
         let painted = rgba
             .chunks_exact(4)
@@ -2667,7 +2966,8 @@ mod tests {
         let mesh = cook_viewport_mesh(&Graph::smoke_puff_preset()).expect("cook");
         let camera = default_camera_for_mesh(&mesh);
         let frame = default_smoke_preview_frame(&mesh);
-        let preview = render_native_viewport(&mesh, frame, 640, 480, &camera).expect("render");
+        let preview =
+            render_native_viewport(&mesh, frame, 640, 480, &camera, &legacy_env()).expect("render");
         let rgba = preview.decode_rgba().expect("decode");
         assert_eq!(rgba.len(), 640 * 480 * 4);
         let plume = preview_smoke_plume_metrics(&rgba, preview.width, preview.height, GPU_CLEAR_RGBA);
@@ -2688,7 +2988,8 @@ mod tests {
         let mesh = cook_viewport_mesh(&Graph::smoke_sphere_preset()).expect("cook");
         let camera = default_camera_for_mesh(&mesh);
         let frame = default_smoke_preview_frame(&mesh);
-        let preview = render_native_viewport(&mesh, frame, 640, 480, &camera).expect("render");
+        let preview =
+            render_native_viewport(&mesh, frame, 640, 480, &camera, &legacy_env()).expect("render");
         let rgba = preview.decode_rgba().expect("decode");
         let plume = preview_smoke_plume_metrics(&rgba, preview.width, preview.height, GPU_CLEAR_RGBA);
         let splat_energy = preview_splat_disk_energy(&rgba, preview.width, preview.height, GPU_CLEAR_RGBA);
@@ -2708,19 +3009,22 @@ mod tests {
         let mesh = cook_viewport_mesh(&Graph::smoke_puff_preset()).expect("cook");
         let camera = default_camera_for_mesh(&mesh);
         let frame = default_smoke_preview_frame(&mesh);
-        let preview = render_native_viewport(&mesh, frame, 640, 480, &camera).expect("render");
+        let preview =
+            render_native_viewport(&mesh, frame, 640, 480, &camera, &studio_env()).expect("render");
         let rgba = preview.decode_rgba().expect("decode");
+        assert!(
+            preview_background_has_variation(&rgba, preview.width, preview.height),
+            "studio HDR background should vary across corners"
+        );
         let artifact_dir =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/tests/artifacts");
         std::fs::create_dir_all(&artifact_dir).expect("artifact dir");
         let png_path = artifact_dir.join("smoke_puff_wgpu_preview.png");
         write_rgba_png(&png_path, preview.width, preview.height, &rgba).expect("write png");
 
-        let plume = preview_smoke_plume_metrics(&rgba, preview.width, preview.height, GPU_CLEAR_RGBA);
         assert!(
-            preview_has_soft_smoke_plume(&rgba, preview.width, preview.height, GPU_CLEAR_RGBA),
-            "smoke_puff plume: {:?}",
-            plume
+            preview_center_differs_from_corners(&rgba, preview.width, preview.height),
+            "smoke puff should read against HDR background"
         );
         assert!(png_path.exists());
         assert!(std::fs::metadata(&png_path).expect("png metadata").len() > 1024);
@@ -2731,8 +3035,13 @@ mod tests {
         let mesh = cook_viewport_mesh(&Graph::smoke_sphere_preset()).expect("cook");
         let camera = default_camera_for_mesh(&mesh);
         let frame = default_smoke_preview_frame(&mesh);
-        let preview = render_native_viewport(&mesh, frame, 640, 480, &camera).expect("render");
+        let preview =
+            render_native_viewport(&mesh, frame, 640, 480, &camera, &studio_env()).expect("render");
         let rgba = preview.decode_rgba().expect("decode");
+        assert!(
+            preview_background_has_variation(&rgba, preview.width, preview.height),
+            "studio HDR background should vary across corners"
+        );
 
         let artifact_dir =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/tests/artifacts");
@@ -2740,11 +3049,9 @@ mod tests {
         let png_path = artifact_dir.join("smoke_sphere_wgpu_preview.png");
         write_rgba_png(&png_path, preview.width, preview.height, &rgba).expect("write png");
 
-        let plume = preview_smoke_plume_metrics(&rgba, preview.width, preview.height, GPU_CLEAR_RGBA);
         assert!(
-            preview_has_soft_smoke_plume(&rgba, preview.width, preview.height, GPU_CLEAR_RGBA),
-            "smoke_sphere plume: {:?}",
-            plume
+            preview_center_differs_from_corners(&rgba, preview.width, preview.height),
+            "smoke sphere should read against HDR background"
         );
         assert!(png_path.exists());
         assert!(std::fs::metadata(&png_path).expect("png metadata").len() > 1024);
@@ -2754,7 +3061,8 @@ mod tests {
     fn render_shop_street_has_meaningful_contrast() {
         let mesh = cook_viewport_mesh(&Graph::shop_street_preset()).expect("cook");
         let camera = default_camera_for_mesh(&mesh);
-        let preview = render_native_viewport(&mesh, 0, 640, 480, &camera).expect("render");
+        let preview =
+            render_native_viewport(&mesh, 0, 640, 480, &camera, &legacy_env()).expect("render");
         let rgba = preview.decode_rgba().expect("decode");
         let center_metrics =
             preview_center_contrast_metrics(&rgba, preview.width, preview.height, CLEAR_RGBA);
@@ -2771,7 +3079,8 @@ mod tests {
     fn render_shop_street_writes_preview_artifact() {
         let mesh = cook_viewport_mesh(&Graph::shop_street_preset()).expect("cook");
         let camera = default_camera_for_mesh(&mesh);
-        let preview = render_native_viewport(&mesh, 0, 640, 480, &camera).expect("render");
+        let preview =
+            render_native_viewport(&mesh, 0, 640, 480, &camera, &studio_env()).expect("render");
         let rgba = preview.decode_rgba().expect("decode");
         let center_metrics =
             preview_center_contrast_metrics(&rgba, preview.width, preview.height, CLEAR_RGBA);
@@ -2788,6 +3097,30 @@ mod tests {
         assert!(std::fs::metadata(&png_path).expect("png metadata").len() > 1024);
     }
 
+
+    #[test]
+    fn studio_environment_background_not_flat_gray() {
+        let mesh = cook_viewport_mesh(&Graph::smoke_puff_preset()).expect("cook");
+        let camera = default_camera_for_mesh(&mesh);
+        let frame = default_smoke_preview_frame(&mesh);
+        let preview =
+            render_native_viewport(&mesh, frame, 320, 240, &camera, &studio_env()).expect("render");
+        let rgba = preview.decode_rgba().expect("decode");
+        assert!(
+            preview_background_has_variation(&rgba, preview.width, preview.height),
+            "studio environment should paint a non-uniform background"
+        );
+        assert!(
+            preview_center_differs_from_corners(&rgba, preview.width, preview.height),
+            "smoke should still raymarch over HDR background"
+        );
+    }
+
+    #[test]
+    fn environment_map_sampling_has_lateral_variation() {
+        let map = environment::generate_studio_soft(64, 32);
+        assert!(environment::map_has_horizontal_variation(&map));
+    }
 
     #[test]
     fn slab_heuristics_reject_single_flat_region() {

@@ -34,6 +34,7 @@ Building → city workflow plus smoke/gas:
 
 - **Smoke / gas (Phase 1)** — Eulerian solver in `elfentier_core` (`SmokeDomain` → `SmokeSource` → `SmokeSolver` → `SmokeRoot`); animated soft particle impostors from density; **煙 · Smoke puff** preset
 - **Native wgpu preview** — instanced mesh + liquid/smoke rendering offscreen; `render_native_viewport_command` for orbit/animation frames
+- **Viewport HDR / environment** — equirect background + simple volume IBL; built-in studio presets or custom `.hdr`/`.exr`/image ([docs/viewport-environment.md](docs/viewport-environment.md))
 
 ### Film path — Phase A (smoke volume raymarch)
 

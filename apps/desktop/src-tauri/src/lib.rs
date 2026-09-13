@@ -18,6 +18,7 @@ use elfentier_core::{
     MeshStats,
 };
 use serde::{Deserialize, Serialize};
+use elfentier_core::environment::ViewportEnvironment;
 use elfentier_wgpu::{
     default_camera_for_mesh, render_native_viewport, NativePreviewImage, NativeViewportCamera,
 };
@@ -58,6 +59,7 @@ struct RenderNativeRequest {
     width: u32,
     height: u32,
     camera: NativeViewportCamera,
+    environment: Option<ViewportEnvironment>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -170,8 +172,9 @@ fn cook(graph: Graph) -> Result<CookWithMeshResult, String> {
     let stats = cook_graph(&graph)?;
     let mesh = cook_viewport_mesh(&graph)?;
     let camera = default_camera_for_mesh(&mesh);
+    let environment = ViewportEnvironment::default();
     let (native_preview, native_preview_error) =
-        match render_native_viewport(&mesh, 0, 960, 720, &camera) {
+        match render_native_viewport(&mesh, 0, 960, 720, &camera, &environment) {
             Ok(preview) => (Some(preview), None),
             Err(err) => {
                 eprintln!("native viewport preview failed: {err}");
@@ -190,13 +193,33 @@ fn cook(graph: Graph) -> Result<CookWithMeshResult, String> {
 
 #[tauri::command]
 fn render_native_viewport_command(request: RenderNativeRequest) -> Result<NativePreviewImage, String> {
+    let environment = request
+        .environment
+        .unwrap_or_else(ViewportEnvironment::default);
     render_native_viewport(
         &request.mesh,
         request.smoke_frame,
         request.width,
         request.height,
         &request.camera,
+        &environment,
     )
+}
+
+#[tauri::command]
+fn get_default_viewport_environment() -> ViewportEnvironment {
+    ViewportEnvironment::default()
+}
+
+#[tauri::command]
+fn pick_hdr_file_command() -> Option<String> {
+    rfd::FileDialog::new()
+        .add_filter(
+            "HDR / environment image",
+            &["hdr", "exr", "png", "jpg", "jpeg"],
+        )
+        .pick_file()
+        .map(|path| path.to_string_lossy().into_owned())
 }
 
 fn map_cook_result(result: elfentier_core::graph::CookResult, native_viewport: bool) -> CookResult {
@@ -293,6 +316,8 @@ pub fn run() {
             cook_city_graph,
             cook,
             render_native_viewport_command,
+            get_default_viewport_environment,
+            pick_hdr_file_command,
             export_city_graph,
             export_gltf,
             export_smoke_density_command,

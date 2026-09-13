@@ -9,12 +9,14 @@ import type {
   Graph,
   NativePreviewImage,
   NativeViewportCamera,
+  ViewportEnvironment,
   LiquidExportResult,
   ExportBundleResult,
   SmokeExportResult,
   ViewportMesh,
 } from "./types/graph";
 import Viewport3D from "./viewport/Viewport3D";
+import { loadViewportEnvironment } from "./viewport/environmentStorage";
 import "./App.css";
 
 function formatCookStatus(stats: CookResult): string {
@@ -38,6 +40,9 @@ function App() {
   const [viewportMesh, setViewportMesh] = useState<ViewportMesh | null>(null);
   const [nativePreview, setNativePreview] = useState<NativePreviewImage | null>(null);
   const [nativeCamera, setNativeCamera] = useState<NativeViewportCamera | null>(null);
+  const [viewportEnvironment, setViewportEnvironment] = useState<ViewportEnvironment>(() =>
+    loadViewportEnvironment(),
+  );
   const [viewportError, setViewportError] = useState<string | null>(null);
   const [exportResult, setExportResult] = useState<ExportResult | null>(null);
   const [smokeExportResult, setSmokeExportResult] = useState<SmokeExportResult | null>(null);
@@ -322,6 +327,8 @@ function App() {
               nativePreview={nativePreview}
               nativeCamera={nativeCamera}
               initialError={viewportError}
+              environment={viewportEnvironment}
+              onEnvironmentChange={setViewportEnvironment}
             />
           }
         />

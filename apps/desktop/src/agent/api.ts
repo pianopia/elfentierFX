@@ -8,6 +8,7 @@ import type {
   Graph,
   NativePreviewImage,
   NativeViewportCamera,
+  ViewportEnvironment,
   PresetInfo,
   LiquidExportResult,
   ExportBundleResult,
@@ -56,6 +57,7 @@ export const agentApi = {
     width: number,
     height: number,
     camera: NativeViewportCamera,
+    environment?: ViewportEnvironment,
   ) =>
     invoke<NativePreviewImage>("render_native_viewport_command", {
       request: {
@@ -64,8 +66,14 @@ export const agentApi = {
         width,
         height,
         camera,
+        environment: environment ?? null,
       },
     }),
+
+  getDefaultViewportEnvironment: () =>
+    invoke<ViewportEnvironment>("get_default_viewport_environment"),
+
+  pickHdrFile: () => invoke<string | null>("pick_hdr_file_command"),
 
   cookStats: (graph: Graph) => invoke<CookResult>("cook_city_graph", { graph }),
 

@@ -1,5 +1,7 @@
 //! GPU volume raymarch for smoke viewport previews (trilinear density + Beer-Lambert).
 
+use elfentier_core::environment::ViewportEnvironment;
+
 /// WGSL shader: full-screen raymarch through a 3D density grid.
 pub const VOLUME_RAYMARCH_SHADER: &str = r#"
 struct VolumeUniform {
@@ -14,10 +16,13 @@ struct VolumeUniform {
     density_params: vec4f,
     light_dir: vec4f,
     clear_color: vec4f,
+    env_params: vec4f,
 }
 
 @group(0) @binding(0) var<uniform> vol: VolumeUniform;
 @group(0) @binding(1) var density_tex: texture_3d<f32>;
+@group(0) @binding(2) var env_tex: texture_2d<f32>;
+@group(0) @binding(3) var env_sampler: sampler;
 
 struct VsOut {
     @builtin(position) clip: vec4f,
@@ -81,6 +86,48 @@ fn sample_density_trilinear(world_pos: vec3f) -> f32 {
     return sum;
 }
 
+fn rotate_y_vec(v: vec3f, yaw: f32) -> vec3f {
+    let c = cos(yaw);
+    let s = sin(yaw);
+    return vec3f(c * v.x + s * v.z, v.y, -s * v.x + c * v.z);
+}
+
+fn sample_env_sharp(rd: vec3f) -> vec3f {
+    let dir = rotate_y_vec(normalize(rd), vol.env_params.y);
+    let theta = atan2(dir.x, dir.z);
+    let phi = asin(clamp(dir.y, -1.0, 1.0));
+    let u = theta / (2.0 * 3.14159265) + 0.5;
+    let v = 0.5 - phi / 3.14159265;
+    return textureSampleLevel(env_tex, env_sampler, vec2f(u, v), 0.0).rgb;
+}
+
+fn sample_env_diffuse(rd: vec3f) -> vec3f {
+    if (vol.env_params.w < 0.5) {
+        return vol.clear_color.rgb;
+    }
+    let blur = vol.env_params.z;
+    if (blur < 0.001) {
+        return sample_env_sharp(rd) * vol.env_params.x;
+    }
+    let spread = blur * 0.18;
+    var acc = vec3f(0.0);
+    let taps = 5.0;
+    for (var i = 0.0; i < taps; i += 1.0) {
+        let angle = (i / taps) * 2.0 * 3.14159265;
+        let offset = vec3f(
+            spread * cos(angle),
+            spread * 0.5 * sin(angle),
+            spread * 0.35 * cos(angle * 1.7),
+        );
+        acc += sample_env_sharp(normalize(rd + offset));
+    }
+    return (acc / taps) * vol.env_params.x;
+}
+
+fn env_luma(rgb: vec3f) -> f32 {
+    return dot(rgb, vec3f(0.299, 0.587, 0.114));
+}
+
 @fragment
 fn fs_main(input: VsOut) -> @location(0) vec4f {
     let aspect = vol.viewport.x;
@@ -107,8 +154,13 @@ fn fs_main(input: VsOut) -> @location(0) vec4f {
     let density_scale = vol.density_params.x;
     let absorption = vol.density_params.y;
     let scatter = vol.density_params.z;
-    let ambient = vol.density_params.w;
+    let ambient_base = vol.density_params.w;
     let light_dir = normalize(vol.light_dir.xyz);
+    let env_ambient = sample_env_diffuse(rd);
+    let env_key = sample_env_sharp(-light_dir);
+    let ambient = ambient_base * 0.25
+        + env_luma(env_ambient) * 0.55
+        + env_luma(env_key) * 0.20;
 
     var transmittance = 1.0;
     var accumulated = vec3f(0.0);
@@ -142,7 +194,8 @@ fn fs_main(input: VsOut) -> @location(0) vec4f {
     let dense = vec3f(0.70, 0.68, 0.64);
     let cool = vec3f(0.82, 0.86, 0.92);
     let temp_tint = mix(warm, cool, clamp(vol.light_dir.w, 0.0, 1.0));
-    let col = mix(temp_tint, dense, density_norm);
+    let env_tint = mix(temp_tint, env_ambient, 0.22);
+    let col = mix(env_tint, dense, density_norm);
     let alpha = clamp((1.0 - transmittance) * 1.15, 0.0, 0.92);
     return vec4f(col, alpha);
 }
@@ -163,6 +216,7 @@ pub struct VolumeUniform {
     pub density_params: [f32; 4],
     pub light_dir: [f32; 4],
     pub clear_color: [f32; 4],
+    pub env_params: [f32; 4],
 }
 
 /// Builds volume uniform data from density grid metadata and camera basis.
@@ -179,8 +233,11 @@ pub fn build_volume_uniform(
     max_density: f32,
     clear_rgb: [f32; 3],
     temperature: f32,
+    environment: &ViewportEnvironment,
 ) -> VolumeUniform {
     let max_d = max_density.max(1e-5);
+    let env_enabled = environment.enabled
+        && environment.effective_preset() != elfentier_core::environment::ViewportEnvironmentPreset::FlatGray;
     VolumeUniform {
         eye: [eye[0], eye[1], eye[2], 1.0],
         forward: [forward[0], forward[1], forward[2], 0.0],
@@ -198,6 +255,12 @@ pub fn build_volume_uniform(
         density_params: [4.0 / max_d, 2.4, 1.6, 0.38],
         light_dir: [0.35, 0.82, 0.45, temperature.clamp(0.0, 1.0)],
         clear_color: [clear_rgb[0], clear_rgb[1], clear_rgb[2], 1.0],
+        env_params: [
+            environment.intensity.max(0.0),
+            environment.rotation_yaw_deg.to_radians(),
+            environment.diffuse_blur.clamp(0.0, 1.0),
+            if env_enabled { 1.0 } else { 0.0 },
+        ],
     }
 }
 
