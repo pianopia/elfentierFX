@@ -91,13 +91,13 @@ fn vs_main(particle: Particle, @builtin(vertex_index) vid: u32) -> VsOut {
         right = vec3f(1.0, 0.0, 0.0);
     }
     let up = cross(normalize(to_particle), right);
-    let radius = particle.size * (0.45 + 0.55 * particle.opacity);
+    let radius = particle.size * (0.65 + 0.35 * particle.opacity);
     let offset = right * uv.x * radius + up * uv.y * radius;
     let world = particle.center + offset;
     var out: VsOut;
     out.clip = camera.view_proj * vec4f(world, 1.0);
     out.uv = uv;
-    out.opacity = particle.opacity * 0.55;
+    out.opacity = particle.opacity * 0.42;
     return out;
 }
 
@@ -107,9 +107,9 @@ fn fs_main(input: VsOut) -> @location(0) vec4f {
     if (r > 1.0) {
         discard;
     }
-    let falloff = pow(1.0 - r, 2.2);
-    let col = vec3f(0.86, 0.89, 0.94);
-    return vec4f(col, input.opacity * falloff);
+    let falloff = pow(1.0 - r, 2.0);
+    let col = vec3f(0.92, 0.94, 0.98);
+    return vec4f(col, input.opacity * falloff * 0.32);
 }
 "#;
 
@@ -215,7 +215,7 @@ fn vs_main(input: VsIn) -> @builtin(position) vec4f {
 
 @fragment
 fn fs_main() -> @location(0) vec4f {
-    return vec4f(0.16, 0.19, 0.24, 1.0);
+    return vec4f(0.42, 0.46, 0.54, 1.0);
 }
 "#;
 
@@ -295,6 +295,89 @@ pub fn preview_has_visible_pixels(rgba: &[u8], clear: [u8; 4]) -> bool {
     rgba.chunks_exact(4).any(|px| px != clear)
 }
 
+/// Contrast metrics for preview QA — rejects flat mid-gray frames that still differ from clear.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PreviewContrastMetrics {
+    pub pixel_count: usize,
+    pub max_channel_delta: u8,
+    pub mean_luma: f32,
+    pub luma_stddev: f32,
+    pub pct_pixels_above_delta: f32,
+}
+
+const PREVIEW_MIN_MAX_DELTA: u8 = 48;
+const PREVIEW_MIN_LUMA_STDDEV: f32 = 8.0;
+const PREVIEW_MIN_CONTRAST_PIXEL_PCT: f32 = 0.5;
+const PREVIEW_MIN_UNIQUE_COLORS: usize = 32;
+const PREVIEW_CONTRAST_DELTA_THRESHOLD: u8 = 16;
+
+pub fn preview_contrast_metrics(rgba: &[u8], clear: [u8; 4]) -> PreviewContrastMetrics {
+    let pixel_count = rgba.len() / 4;
+    if pixel_count == 0 {
+        return PreviewContrastMetrics {
+            pixel_count: 0,
+            max_channel_delta: 0,
+            mean_luma: 0.0,
+            luma_stddev: 0.0,
+            pct_pixels_above_delta: 0.0,
+        };
+    }
+
+    let mut max_channel_delta = 0u8;
+    let mut above_delta = 0usize;
+    let mut sum_luma = 0.0f64;
+    let mut sum_luma_sq = 0.0f64;
+
+    for px in rgba.chunks_exact(4) {
+        let delta = px[0]
+            .abs_diff(clear[0])
+            .max(px[1].abs_diff(clear[1]))
+            .max(px[2].abs_diff(clear[2]));
+        max_channel_delta = max_channel_delta.max(delta);
+        if delta >= PREVIEW_CONTRAST_DELTA_THRESHOLD {
+            above_delta += 1;
+        }
+        let luma = 0.2126 * px[0] as f64 + 0.7152 * px[1] as f64 + 0.0722 * px[2] as f64;
+        sum_luma += luma;
+        sum_luma_sq += luma * luma;
+    }
+
+    let mean_luma = (sum_luma / pixel_count as f64) as f32;
+    let variance = (sum_luma_sq / pixel_count as f64 - sum_luma * sum_luma / (pixel_count as f64 * pixel_count as f64))
+        .max(0.0);
+    PreviewContrastMetrics {
+        pixel_count,
+        max_channel_delta,
+        mean_luma,
+        luma_stddev: variance.sqrt() as f32,
+        pct_pixels_above_delta: 100.0 * above_delta as f32 / pixel_count as f32,
+    }
+}
+
+pub fn preview_has_meaningful_contrast(rgba: &[u8], clear: [u8; 4]) -> bool {
+    let m = preview_contrast_metrics(rgba, clear);
+    let mut unique = std::collections::HashSet::new();
+    for px in rgba.chunks_exact(4) {
+        unique.insert((px[0], px[1], px[2]));
+    }
+    m.max_channel_delta >= PREVIEW_MIN_MAX_DELTA
+        && m.luma_stddev >= PREVIEW_MIN_LUMA_STDDEV
+        && m.pct_pixels_above_delta >= PREVIEW_MIN_CONTRAST_PIXEL_PCT
+        && unique.len() >= PREVIEW_MIN_UNIQUE_COLORS
+}
+
+/// Converts OpenGL clip space (z in [-w, w]) to WebGPU clip space (z in [0, w]).
+const OPENGL_TO_WGPU: [[f32; 4]; 4] = [
+    [1.0, 0.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0, 0.0],
+    [0.0, 0.0, 0.5, 0.5],
+    [0.0, 0.0, 0.0, 1.0],
+];
+
+fn clip_from_view_proj(view: [[f32; 4]; 4], proj: [[f32; 4]; 4]) -> [[f32; 4]; 4] {
+    mul4(OPENGL_TO_WGPU, mul4(proj, view))
+}
+
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct MeshVertex {
@@ -338,7 +421,61 @@ struct LiquidParticle {
 
 /// Default camera fitted to a cooked viewport payload.
 pub fn default_camera_for_mesh(mesh: &ViewportMesh) -> NativeViewportCamera {
-    let (min, max) = bounds_for_mesh(mesh);
+    let (mut min, mut max) = bounds_for_mesh(mesh);
+
+    if mesh.positions.is_empty() {
+        if let Some(smoke) = &mesh.smoke {
+            if let Some(frame) = smoke.frames.first() {
+                if frame.particle_count > 0 {
+                    min = [f32::INFINITY; 3];
+                    max = [f32::NEG_INFINITY; 3];
+                    let mut mean_size = 0.0f32;
+                    for i in 0..frame.particle_count as usize {
+                        let p = [
+                            frame.positions[i * 3],
+                            frame.positions[i * 3 + 1],
+                            frame.positions[i * 3 + 2],
+                        ];
+                        for axis in 0..3 {
+                            min[axis] = min[axis].min(p[axis]);
+                            max[axis] = max[axis].max(p[axis]);
+                        }
+                        mean_size += frame.sizes.get(i).copied().unwrap_or(0.25);
+                    }
+                    mean_size /= frame.particle_count as f32;
+                    let pad = (mean_size * 4.0).max(0.75);
+                    for axis in 0..3 {
+                        min[axis] -= pad;
+                        max[axis] += pad;
+                    }
+                }
+            }
+        } else if let Some(liquid) = &mesh.liquid {
+            if let Some(frame) = liquid.frames.first() {
+                if frame.particle_count > 0 {
+                    min = [f32::INFINITY; 3];
+                    max = [f32::NEG_INFINITY; 3];
+                    for i in 0..frame.particle_count as usize {
+                        let p = [
+                            frame.positions[i * 3],
+                            frame.positions[i * 3 + 1],
+                            frame.positions[i * 3 + 2],
+                        ];
+                        for axis in 0..3 {
+                            min[axis] = min[axis].min(p[axis]);
+                            max[axis] = max[axis].max(p[axis]);
+                        }
+                    }
+                    let pad = 1.2f32;
+                    for axis in 0..3 {
+                        min[axis] -= pad;
+                        max[axis] += pad;
+                    }
+                }
+            }
+        }
+    }
+
     let center = [
         (min[0] + max[0]) * 0.5,
         (min[1] + max[1]) * 0.5,
@@ -350,17 +487,19 @@ pub fn default_camera_for_mesh(mesh: &ViewportMesh) -> NativeViewportCamera {
         max[2] - min[2],
     ]
     .into_iter()
-    .fold(6.0_f32, f32::max);
-    let dist = extent * 1.8;
+    .fold(1.5_f32, f32::max);
+    let smoke_only = mesh.positions.is_empty() && mesh.smoke.is_some();
+    let dist_scale = if smoke_only { 2.0 } else { 1.8 };
+    let dist = extent * dist_scale;
     NativeViewportCamera {
         eye: [
-            center[0] + dist * 0.65,
-            center[1] + dist * 0.5,
-            center[2] + dist * 0.75,
+            center[0] + dist * 0.72,
+            center[1] + dist * 0.42,
+            center[2] + dist * 0.88,
         ],
         target: center,
         up: [0.0, 1.0, 0.0],
-        fov_y_deg: 50.0,
+        fov_y_deg: if smoke_only { 42.0 } else { 50.0 },
     }
 }
 
@@ -581,10 +720,10 @@ fn look_at_rh(eye: [f32; 3], target: [f32; 3], up: [f32; 3]) -> [[f32; 4]; 4] {
     let s = normalize3(cross3(f, up));
     let u = cross3(s, f);
     [
-        [s[0], u[0], -f[0], 0.0],
-        [s[1], u[1], -f[1], 0.0],
-        [s[2], u[2], -f[2], 0.0],
-        [-dot3(s, eye), -dot3(u, eye), dot3(f, eye), 1.0],
+        [s[0], u[0], -f[0], -dot3(s, eye)],
+        [s[1], u[1], -f[1], -dot3(u, eye)],
+        [s[2], u[2], -f[2], dot3(f, eye)],
+        [0.0, 0.0, 0.0, 1.0],
     ]
 }
 
@@ -614,6 +753,134 @@ fn mul4(a: [[f32; 4]; 4], b: [[f32; 4]; 4]) -> [[f32; 4]; 4] {
         }
     }
     out
+}
+
+/// WGSL `mat4x4 * vec4` — each result row dots the matching matrix row with `v`.
+fn mul4_vec4(m: [[f32; 4]; 4], v: [f32; 4]) -> [f32; 4] {
+    [
+        m[0][0] * v[0] + m[0][1] * v[1] + m[0][2] * v[2] + m[0][3] * v[3],
+        m[1][0] * v[0] + m[1][1] * v[1] + m[1][2] * v[2] + m[1][3] * v[3],
+        m[2][0] * v[0] + m[2][1] * v[1] + m[2][2] * v[2] + m[2][3] * v[3],
+        m[3][0] * v[0] + m[3][1] * v[1] + m[3][2] * v[2] + m[3][3] * v[3],
+    ]
+}
+
+fn project_world_to_ndc(
+    view_proj: [[f32; 4]; 4],
+    world: [f32; 3],
+) -> Option<[f32; 3]> {
+    let clip = mul4_vec4(view_proj, [world[0], world[1], world[2], 1.0]);
+    if clip[3] <= 0.0 {
+        return None;
+    }
+    let inv_w = 1.0 / clip[3];
+    Some([clip[0] * inv_w, clip[1] * inv_w, clip[2] * inv_w])
+}
+
+fn clip_in_frustum(clip: [f32; 4]) -> bool {
+    if clip[3] <= 0.0 {
+        return false;
+    }
+    let w = clip[3];
+    // XY overlap is enough for billboard particles; clip Z differs between GL/WGPU paths.
+    clip[0].abs() <= w * 1.25 && clip[1].abs() <= w * 1.25
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct PreviewProjectionDiagnostics {
+    pub particle_count: u32,
+    pub position_min: [f32; 3],
+    pub position_max: [f32; 3],
+    pub particles_in_frustum: u32,
+    pub ndc_min: [f32; 3],
+    pub ndc_max: [f32; 3],
+    pub mean_particle_size: f32,
+    pub mean_screen_radius_px: f32,
+}
+
+pub fn preview_projection_diagnostics(
+    mesh: &ViewportMesh,
+    smoke_frame: u32,
+    width: u32,
+    height: u32,
+    camera: &NativeViewportCamera,
+) -> PreviewProjectionDiagnostics {
+    let view = look_at_rh(camera.eye, camera.target, camera.up);
+    let proj = perspective_rh(camera.fov_y_deg, width as f32 / height as f32, 0.1, 500.0);
+    let view_proj = clip_from_view_proj(view, proj);
+    let tan_half_fov = (0.5 * camera.fov_y_deg.to_radians()).tan();
+
+    let mut position_min = [f32::INFINITY; 3];
+    let mut position_max = [f32::NEG_INFINITY; 3];
+    let mut ndc_min = [f32::INFINITY; 3];
+    let mut ndc_max = [f32::NEG_INFINITY; 3];
+    let mut particles_in_frustum = 0u32;
+    let mut mean_particle_size = 0.0f32;
+    let mut mean_screen_radius_px = 0.0f32;
+    let mut particle_count = 0u32;
+
+    if let Some(smoke) = &mesh.smoke {
+        if let Some(frame) = smoke.frames.get(smoke_frame as usize) {
+            particle_count = frame.particle_count;
+            for i in 0..frame.particle_count as usize {
+                let p = [
+                    frame.positions[i * 3],
+                    frame.positions[i * 3 + 1],
+                    frame.positions[i * 3 + 2],
+                ];
+                for axis in 0..3 {
+                    position_min[axis] = position_min[axis].min(p[axis]);
+                    position_max[axis] = position_max[axis].max(p[axis]);
+                }
+                let size = frame.sizes.get(i).copied().unwrap_or(0.25);
+                mean_particle_size += size;
+                let to_eye = [
+                    p[0] - camera.eye[0],
+                    p[1] - camera.eye[1],
+                    p[2] - camera.eye[2],
+                ];
+                let dist = (to_eye[0] * to_eye[0] + to_eye[1] * to_eye[1] + to_eye[2] * to_eye[2])
+                    .sqrt()
+                    .max(0.05);
+                let screen_radius = (size / dist) * (height as f32 * 0.5) / tan_half_fov;
+                mean_screen_radius_px += screen_radius;
+                let clip = mul4_vec4(view_proj, [p[0], p[1], p[2], 1.0]);
+                if clip[3] > 0.0 {
+                    let inv_w = 1.0 / clip[3];
+                    let ndc = [clip[0] * inv_w, clip[1] * inv_w, clip[2] * inv_w];
+                    for axis in 0..3 {
+                        ndc_min[axis] = ndc_min[axis].min(ndc[axis]);
+                        ndc_max[axis] = ndc_max[axis].max(ndc[axis]);
+                    }
+                    if clip_in_frustum(clip) {
+                        particles_in_frustum += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    if particle_count > 0 {
+        let n = particle_count as f32;
+        mean_particle_size /= n;
+        mean_screen_radius_px /= n;
+    } else if !position_min[0].is_finite() {
+        position_min = [0.0; 3];
+        position_max = [0.0; 3];
+        ndc_min = [0.0; 3];
+        ndc_max = [0.0; 3];
+    }
+
+    PreviewProjectionDiagnostics {
+        particle_count,
+        position_min,
+        position_max,
+        particles_in_frustum,
+        ndc_min,
+        ndc_max,
+        mean_particle_size,
+        mean_screen_radius_px,
+    }
 }
 
 fn pack_liquid_particles(frame: &ViewportLiquidFrame) -> Vec<LiquidParticle> {
@@ -687,7 +954,7 @@ async fn render_wgpu(
 
     let view = look_at_rh(camera.eye, camera.target, camera.up);
     let proj = perspective_rh(camera.fov_y_deg, w as f32 / h as f32, 0.1, 500.0);
-    let view_proj = mul4(proj, view);
+    let view_proj = clip_from_view_proj(view, proj);
 
     let mesh_camera = CameraUniform {
         view_proj,
@@ -911,6 +1178,53 @@ async fn render_wgpu(
             depth_write_enabled: false,
             depth_compare: wgpu::CompareFunction::LessEqual,
             stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState {
+                constant: 2,
+                slope_scale: 1.0,
+                clamp: 0.0,
+            },
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    });
+
+    let grid_overlay_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("grid overlay pipeline"),
+        layout: Some(&mesh_pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &grid_shader,
+            entry_point: Some("vs_main"),
+            buffers: &[wgpu::VertexBufferLayout {
+                array_stride: 12,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &[wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x3,
+                    offset: 0,
+                    shader_location: 0,
+                }],
+            }],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &grid_shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::LineList,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth32Float,
+            depth_write_enabled: false,
+            depth_compare: wgpu::CompareFunction::Always,
+            stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
         }),
         multisample: wgpu::MultisampleState::default(),
@@ -953,6 +1267,53 @@ async fn render_wgpu(
             format: wgpu::TextureFormat::Depth32Float,
             depth_write_enabled: false,
             depth_compare: wgpu::CompareFunction::LessEqual,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState {
+                constant: 2,
+                slope_scale: 1.0,
+                clamp: 0.0,
+            },
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    });
+
+    let collider_overlay_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("collider overlay pipeline"),
+        layout: Some(&mesh_pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &collider_shader,
+            entry_point: Some("vs_main"),
+            buffers: &[wgpu::VertexBufferLayout {
+                array_stride: 12,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &[wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x3,
+                    offset: 0,
+                    shader_location: 0,
+                }],
+            }],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &collider_shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::LineList,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth32Float,
+            depth_write_enabled: false,
+            depth_compare: wgpu::CompareFunction::Always,
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
         }),
@@ -1214,6 +1575,22 @@ async fn render_wgpu(
                 pass.draw(0..6, 0..count);
             }
         }
+
+        if let (Some(grid_vb), Some(grid_bg)) = (&grid_vertex_buffer, Some(&grid_bind_group)) {
+            pass.set_pipeline(&grid_overlay_pipeline);
+            pass.set_bind_group(0, grid_bg, &[]);
+            pass.set_vertex_buffer(0, grid_vb.slice(..));
+            pass.draw(0..grid_lines.len() as u32, 0..1);
+        }
+
+        if let (Some(collider_vb), Some(collider_bg)) =
+            (&collider_vertex_buffer, Some(&grid_bind_group))
+        {
+            pass.set_pipeline(&collider_overlay_pipeline);
+            pass.set_bind_group(0, collider_bg, &[]);
+            pass.set_vertex_buffer(0, collider_vb.slice(..));
+            pass.draw(0..collider_lines.len() as u32, 0..1);
+        }
     }
 
     let bytes_per_row = wgpu::util::align_to(w * 4, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
@@ -1318,39 +1695,119 @@ mod tests {
     }
 
     #[test]
-    fn render_smoke_puff_has_non_clear_pixels() {
+    fn preview_contrast_metrics_reject_flat_gray() {
+        let flat = vec![128u8; 320 * 240 * 4];
+        let m = preview_contrast_metrics(&flat, CLEAR_RGBA);
+        assert!(m.max_channel_delta >= PREVIEW_MIN_MAX_DELTA);
+        assert!(!preview_has_meaningful_contrast(&flat, CLEAR_RGBA));
+    }
+
+    #[test]
+    fn look_at_maps_target_in_front_of_camera() {
+        let eye = [0.0, 0.0, 5.0];
+        let target = [0.0, 0.0, 0.0];
+        let up = [0.0, 1.0, 0.0];
+        let view = look_at_rh(eye, target, up);
+        let view_target = mul4_vec4(view, [target[0], target[1], target[2], 1.0]);
+        assert!(
+            view_target[2] < -1.0 && view_target[2] > -10.0,
+            "target should be on -Z in view space, got {view_target:?}"
+        );
+        let proj = perspective_rh(50.0, 1.0, 0.1, 100.0);
+        let clip = mul4_vec4(clip_from_view_proj(view, proj), [target[0], target[1], target[2], 1.0]);
+        assert!(clip[3] > 0.0, "target should be in front of camera, clip={clip:?}");
+        let ndc = [
+            clip[0] / clip[3],
+            clip[1] / clip[3],
+            clip[2] / clip[3],
+        ];
+        assert!(
+            ndc[0].abs() < 0.01 && ndc[1].abs() < 0.01,
+            "target ndc xy should be centered, got {ndc:?}, clip={clip:?}"
+        );
+    }
+
+    #[test]
+    fn smoke_particles_project_into_view() {
         let mesh = cook_viewport_mesh(&Graph::smoke_puff_preset()).expect("cook");
         let camera = default_camera_for_mesh(&mesh);
-        let preview = render_native_viewport(&mesh, 0, 320, 240, &camera).expect("render");
-        let rgba = preview.decode_rgba().expect("decode");
-        assert_eq!(rgba.len(), 320 * 240 * 4);
+        let diag = preview_projection_diagnostics(&mesh, 0, 640, 480, &camera);
+        assert!(diag.particle_count > 0, "smoke_puff should cook particles");
         assert!(
-            preview_has_visible_pixels(&rgba, CLEAR_RGBA),
-            "smoke_puff preview should contain grid, collider, or smoke pixels"
+            diag.particles_in_frustum > 0,
+            "expected particles in frustum, got {diag:?}"
+        );
+        assert!(
+            diag.mean_screen_radius_px > 2.0,
+            "particles should cover multiple pixels, got {diag:?}"
         );
     }
 
     #[test]
-    fn render_smoke_sphere_has_non_clear_pixels() {
+    fn render_smoke_puff_has_meaningful_contrast() {
+        let mesh = cook_viewport_mesh(&Graph::smoke_puff_preset()).expect("cook");
+        let camera = default_camera_for_mesh(&mesh);
+        let preview = render_native_viewport(&mesh, 0, 640, 480, &camera).expect("render");
+        let rgba = preview.decode_rgba().expect("decode");
+        assert_eq!(rgba.len(), 640 * 480 * 4);
+        assert!(
+            preview_has_meaningful_contrast(&rgba, CLEAR_RGBA),
+            "smoke_puff preview metrics: {:?}",
+            preview_contrast_metrics(&rgba, CLEAR_RGBA)
+        );
+    }
+
+    #[test]
+    fn render_smoke_sphere_has_meaningful_contrast() {
         let mesh = cook_viewport_mesh(&Graph::smoke_sphere_preset()).expect("cook");
         let camera = default_camera_for_mesh(&mesh);
-        let preview = render_native_viewport(&mesh, 0, 320, 240, &camera).expect("render");
+        let preview = render_native_viewport(&mesh, 0, 640, 480, &camera).expect("render");
         let rgba = preview.decode_rgba().expect("decode");
         assert!(
-            preview_has_visible_pixels(&rgba, CLEAR_RGBA),
-            "smoke_sphere preview should contain mesh collider and smoke pixels"
+            preview_has_meaningful_contrast(&rgba, CLEAR_RGBA),
+            "smoke_sphere preview metrics: {:?}",
+            preview_contrast_metrics(&rgba, CLEAR_RGBA)
         );
     }
 
     #[test]
-    fn render_shop_street_has_non_clear_pixels() {
+    fn render_shop_street_has_meaningful_contrast() {
         let mesh = cook_viewport_mesh(&Graph::shop_street_preset()).expect("cook");
         let camera = default_camera_for_mesh(&mesh);
-        let preview = render_native_viewport(&mesh, 0, 320, 240, &camera).expect("render");
+        let preview = render_native_viewport(&mesh, 0, 640, 480, &camera).expect("render");
         let rgba = preview.decode_rgba().expect("decode");
         assert!(
-            preview_has_visible_pixels(&rgba, CLEAR_RGBA),
-            "shop_street preview should contain building mesh and grid pixels"
+            preview_has_meaningful_contrast(&rgba, CLEAR_RGBA),
+            "shop_street preview metrics: {:?}",
+            preview_contrast_metrics(&rgba, CLEAR_RGBA)
         );
+    }
+
+    #[test]
+    fn render_shop_street_writes_preview_artifact() {
+        let mesh = cook_viewport_mesh(&Graph::shop_street_preset()).expect("cook");
+        let camera = default_camera_for_mesh(&mesh);
+        let preview = render_native_viewport(&mesh, 0, 640, 480, &camera).expect("render");
+        let rgba = preview.decode_rgba().expect("decode");
+        assert!(preview_has_meaningful_contrast(&rgba, CLEAR_RGBA));
+
+        let artifact_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/artifacts");
+        std::fs::create_dir_all(&artifact_dir).expect("artifact dir");
+        let png_path = artifact_dir.join("shop_street_wgpu_preview.png");
+        write_rgba_png(&png_path, preview.width, preview.height, &rgba).expect("write png");
+        assert!(png_path.exists());
+        assert!(std::fs::metadata(&png_path).expect("png metadata").len() > 1024);
+    }
+
+    fn write_rgba_png(path: &std::path::Path, width: u32, height: u32, rgba: &[u8]) -> Result<(), String> {
+        use std::io::Write;
+        let file = std::fs::File::create(path).map_err(|err| err.to_string())?;
+        let mut encoder = png::Encoder::new(file, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().map_err(|err| err.to_string())?;
+        writer.write_image_data(rgba).map_err(|err| err.to_string())?;
+        writer.finish().map_err(|err| err.to_string())?;
+        Ok(())
     }
 }
