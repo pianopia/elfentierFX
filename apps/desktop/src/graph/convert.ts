@@ -9,6 +9,10 @@ const PRESET_LAYOUT: Record<string, { x: number; y: number }> = {
   fill_grid: { x: 520, y: 280 },
   merge_instances: { x: 520, y: 400 },
   city_root: { x: 760, y: 120 },
+  smoke_domain: { x: 40, y: 140 },
+  smoke_source: { x: 280, y: 140 },
+  smoke_solver: { x: 520, y: 140 },
+  smoke_root: { x: 760, y: 140 },
 };
 
 export function graphToFlow(graph: Graph): { nodes: Node[]; edges: Edge[] } {
@@ -51,6 +55,9 @@ export function flowToGraph(
       building_params: data.buildingParams ?? null,
       path_input: null,
       grid_input: null,
+      smoke_domain: null,
+      smoke_source: null,
+      smoke_solver: null,
     };
   });
 
@@ -73,6 +80,9 @@ export function mergePresetInputs(graph: Graph, preset: Graph): Graph {
         path_input: presetNode.path_input,
         grid_input: presetNode.grid_input,
         building_params: node.building_params ?? presetNode.building_params,
+        smoke_domain: node.smoke_domain ?? presetNode.smoke_domain,
+        smoke_source: node.smoke_source ?? presetNode.smoke_source,
+        smoke_solver: node.smoke_solver ?? presetNode.smoke_solver,
       };
     }),
   };

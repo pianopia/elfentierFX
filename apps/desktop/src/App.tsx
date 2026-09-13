@@ -7,10 +7,19 @@ import type {
   CookResult,
   ExportResult,
   Graph,
+  SmokeExportResult,
   ViewportMesh,
 } from "./types/graph";
 import Viewport3D from "./viewport/Viewport3D";
 import "./App.css";
+
+function formatCookStatus(stats: CookResult): string {
+  if (stats.smoke_particle_count != null && stats.smoke_particle_count > 0) {
+    const res = stats.smoke_resolution?.join("×") ?? "?";
+    return `Cooked "${stats.graph_name}": smoke ${res} · max ρ ${stats.smoke_max_density?.toFixed(2)} · ${stats.smoke_steps} steps · ${stats.smoke_frame_count} frames · ${stats.smoke_particle_count} particles`;
+  }
+  return `Cooked "${stats.graph_name}": ${stats.instance_count} instances · ${stats.vertex_count} verts · ${stats.triangle_count} tris`;
+}
 
 function App() {
   const [coreVersion, setCoreVersion] = useState("…");
@@ -20,10 +29,13 @@ function App() {
   const [cookResult, setCookResult] = useState<CookResult | null>(null);
   const [viewportMesh, setViewportMesh] = useState<ViewportMesh | null>(null);
   const [exportResult, setExportResult] = useState<ExportResult | null>(null);
+  const [smokeExportResult, setSmokeExportResult] = useState<SmokeExportResult | null>(null);
   const [promptSummary, setPromptSummary] = useState("");
   const [explainText, setExplainText] = useState("");
   const [busy, setBusy] = useState(false);
   const graphRef = useRef<Graph | null>(null);
+
+  const isSmokeGraph = graph?.nodes.some((n) => n.kind === "smoke_root") ?? false;
 
   const refreshExplain = useCallback(async (g: Graph) => {
     try {
@@ -71,26 +83,40 @@ function App() {
     [refreshExplain],
   );
 
-  const handleLoadPreset = useCallback(async () => {
-    setBusy(true);
-    setStatus("Loading shop street preset…");
-    try {
-      const shopPreset = await agentApi.getShopStreetPreset();
-      setPreset(shopPreset);
-      setGraph(shopPreset);
-      graphRef.current = shopPreset;
-      setCookResult(null);
-      setViewportMesh(null);
-      setExportResult(null);
-      setPromptSummary("");
-      setStatus("Shop street preset loaded");
-      refreshExplain(shopPreset);
-    } catch (error) {
-      setStatus(`Preset failed: ${String(error)}`);
-    } finally {
-      setBusy(false);
-    }
-  }, [refreshExplain]);
+  const loadGraphPreset = useCallback(
+    async (label: string, loader: () => Promise<Graph>) => {
+      setBusy(true);
+      setStatus(`Loading ${label}…`);
+      try {
+        const nextPreset = await loader();
+        setPreset(nextPreset);
+        setGraph(nextPreset);
+        graphRef.current = nextPreset;
+        setCookResult(null);
+        setViewportMesh(null);
+        setExportResult(null);
+        setSmokeExportResult(null);
+        setPromptSummary("");
+        setStatus(`${label} loaded`);
+        refreshExplain(nextPreset);
+      } catch (error) {
+        setStatus(`Preset failed: ${String(error)}`);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [refreshExplain],
+  );
+
+  const handleLoadShopPreset = useCallback(
+    () => loadGraphPreset("Shop street preset", agentApi.getShopStreetPreset),
+    [loadGraphPreset],
+  );
+
+  const handleLoadSmokePreset = useCallback(
+    () => loadGraphPreset("Smoke puff preset", agentApi.getSmokePuffPreset),
+    [loadGraphPreset],
+  );
 
   const handleCook = useCallback(async () => {
     const current = graphRef.current;
@@ -99,14 +125,12 @@ function App() {
       return;
     }
     setBusy(true);
-    setStatus("Cooking city graph…");
+    setStatus("Cooking graph…");
     try {
       const result = await agentApi.cook(current);
       setCookResult(result.stats);
       setViewportMesh(result.mesh);
-      setStatus(
-        `Cooked "${result.stats.graph_name}": ${result.stats.instance_count} instances · ${result.stats.vertex_count} verts · ${result.stats.triangle_count} tris`,
-      );
+      setStatus(formatCookStatus(result.stats));
     } catch (error) {
       setStatus(`Cook failed: ${String(error)}`);
     } finally {
@@ -121,6 +145,23 @@ function App() {
       return;
     }
     setBusy(true);
+    if (isSmokeGraph) {
+      setStatus("Exporting smoke density atlas…");
+      try {
+        const path = "/tmp/elfentier_smoke_density.raw";
+        const result = await agentApi.exportSmokeDensity(current, path);
+        setSmokeExportResult(result);
+        setStatus(
+          `Exported smoke atlas (${result.format}) → ${result.path} · ${result.frame_count} frames · ${result.byte_len} bytes`,
+        );
+      } catch (error) {
+        setStatus(`Export failed: ${String(error)}`);
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
     setStatus("Exporting glTF…");
     try {
       const path = "/tmp/elfentier_city.glb";
@@ -134,7 +175,7 @@ function App() {
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [isSmokeGraph]);
 
   const handlePrompt = useCallback(
     async (prompt: string) => {
@@ -151,6 +192,7 @@ function App() {
         setCookResult(null);
         setViewportMesh(null);
         setExportResult(null);
+        setSmokeExportResult(null);
         setStatus(result.summary || "Prompt applied");
         refreshExplain(result.graph);
       } catch (error) {
@@ -170,7 +212,9 @@ function App() {
           <h1>elfentierFX</h1>
           <span className="brand-tag">Alpha 2</span>
         </div>
-        <p className="brand-subtitle">Building → city procedural slice · 3D viewport · prompt-driven graph</p>
+        <p className="brand-subtitle">
+          Building → city · smoke/gas fluids · 3D viewport · prompt-driven graph
+        </p>
       </header>
 
       <PromptBar
@@ -185,7 +229,7 @@ function App() {
           left={
             <NodeCanvas
               preset={preset}
-              graphName={graph?.name ?? "City Graph"}
+              graphName={graph?.name ?? "Graph"}
               onGraphChange={handleGraphChange}
             />
           }
@@ -200,25 +244,40 @@ function App() {
           <button
             type="button"
             className="action-button secondary"
-            onClick={handleLoadPreset}
+            onClick={handleLoadShopPreset}
             disabled={busy}
           >
-            Shop → Street preset
+            Shop → Street
+          </button>
+          <button
+            type="button"
+            className="action-button secondary"
+            onClick={handleLoadSmokePreset}
+            disabled={busy}
+          >
+            煙 · Smoke puff
           </button>
           <button type="button" className="action-button" onClick={handleCook} disabled={busy}>
             Cook
           </button>
           <button type="button" className="action-button" onClick={handleExport} disabled={busy}>
-            Export glTF
+            {isSmokeGraph ? "Export smoke" : "Export glTF"}
           </button>
           {cookResult && (
             <span className="mesh-stats">
-              {cookResult.instance_count} inst · {cookResult.vertex_count}v · {cookResult.triangle_count}t
+              {cookResult.smoke_particle_count != null && cookResult.smoke_particle_count > 0
+                ? `${cookResult.smoke_particle_count} particles · ${cookResult.smoke_steps} steps`
+                : `${cookResult.instance_count} inst · ${cookResult.vertex_count}v · ${cookResult.triangle_count}t`}
             </span>
           )}
           {exportResult && (
             <span className="export-path" title={exportResult.path}>
-              exported
+              glTF exported
+            </span>
+          )}
+          {smokeExportResult && (
+            <span className="export-path" title={smokeExportResult.path}>
+              smoke exported
             </span>
           )}
         </div>

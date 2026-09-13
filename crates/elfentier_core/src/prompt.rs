@@ -3,6 +3,7 @@
 use crate::building::BuildingParams;
 use crate::graph::{Graph, NodeId, NodeKind};
 use crate::placement::GridInput;
+use crate::smoke::{SmokeSolverInput, SmokeSourceInput};
 use serde::{Deserialize, Serialize};
 
 /// High-level intent recognized from a user prompt.
@@ -15,6 +16,7 @@ pub enum PromptIntent {
     AdjustWindows { delta: f32 },
     SwitchPlacement { mode: PlacementMode },
     SetGraphName { name: String },
+    IncreaseSmoke { emission_delta: f32, step_delta: u32 },
     Unknown { raw: String },
 }
 
@@ -34,6 +36,12 @@ pub enum GraphEdit {
     SetBuildingParams { node_id: String, params: BuildingParams },
     SwitchPlacement { mode: PlacementMode },
     SetGraphName { name: String },
+    SetSmokeParams {
+        source_node_id: String,
+        source: SmokeSourceInput,
+        solver_node_id: String,
+        solver: SmokeSolverInput,
+    },
 }
 
 /// Result of interpreting and applying a prompt.
@@ -53,6 +61,33 @@ pub fn interpret_prompt(text: &str) -> Vec<PromptIntent> {
     }
 
     let mut intents = Vec::new();
+
+    // Smoke puff / 煙
+    if contains_any(
+        &normalized,
+        &[
+            "煙",
+            "smoke",
+            "smoke puff",
+            "smoke preset",
+            "ガス",
+            "gas puff",
+        ],
+    ) {
+        intents.push(PromptIntent::LoadPreset {
+            preset_id: "smoke_puff".into(),
+        });
+    }
+
+    if contains_any(
+        &normalized,
+        &["もっと煙", "more smoke", "denser smoke", "煙を増", "煙もっと"],
+    ) {
+        intents.push(PromptIntent::IncreaseSmoke {
+            emission_delta: 1.2,
+            step_delta: 12,
+        });
+    }
 
     // Shop street / 商店街
     if contains_any(&normalized, &["商店街", "shop street", "shop-street", "shotengai"]) {
@@ -117,6 +152,8 @@ pub fn intents_to_edits(graph: &Graph, intents: &[PromptIntent]) -> Vec<GraphEdi
         .nodes
         .iter()
         .find(|n| n.kind == NodeKind::BuildingParams);
+    let smoke_source_node = graph.nodes.iter().find(|n| n.kind == NodeKind::SmokeSource);
+    let smoke_solver_node = graph.nodes.iter().find(|n| n.kind == NodeKind::SmokeSolver);
     let mut edits = Vec::new();
 
     for intent in intents {
@@ -166,6 +203,27 @@ pub fn intents_to_edits(graph: &Graph, intents: &[PromptIntent]) -> Vec<GraphEdi
             PromptIntent::SetGraphName { name } => {
                 edits.push(GraphEdit::SetGraphName { name: name.clone() });
             }
+            PromptIntent::IncreaseSmoke {
+                emission_delta,
+                step_delta,
+            } => {
+                if let (Some(src), Some(slv)) = (smoke_source_node, smoke_solver_node) {
+                    let source = src.smoke_source.unwrap_or_default();
+                    let solver = slv.smoke_solver.unwrap_or_default();
+                    edits.push(GraphEdit::SetSmokeParams {
+                        source_node_id: src.id.0.clone(),
+                        source: SmokeSourceInput {
+                            emission_rate: source.emission_rate + emission_delta,
+                            ..source
+                        },
+                        solver_node_id: slv.id.0.clone(),
+                        solver: SmokeSolverInput {
+                            steps: solver.steps + step_delta,
+                            ..solver
+                        },
+                    });
+                }
+            }
             PromptIntent::Unknown { .. } => {}
         }
     }
@@ -182,6 +240,10 @@ pub fn apply_edits(graph: &Graph, edits: &[GraphEdit]) -> Graph {
             GraphEdit::LoadPreset { preset_id } => {
                 if preset_id == "shop_street" {
                     result = Graph::shop_street_preset();
+                } else if preset_id == "grid_block" {
+                    result = Graph::grid_block_preset();
+                } else if preset_id == "smoke_puff" {
+                    result = Graph::smoke_puff_preset();
                 }
             }
             GraphEdit::SetBuildingParams { node_id, params } => {
@@ -196,6 +258,21 @@ pub fn apply_edits(graph: &Graph, edits: &[GraphEdit]) -> Graph {
             }
             GraphEdit::SetGraphName { name } => {
                 result.name = name.clone();
+            }
+            GraphEdit::SetSmokeParams {
+                source_node_id,
+                source,
+                solver_node_id,
+                solver,
+            } => {
+                for node in &mut result.nodes {
+                    if node.id.0 == *source_node_id {
+                        node.smoke_source = Some(*source);
+                    }
+                    if node.id.0 == *solver_node_id {
+                        node.smoke_solver = Some(*solver);
+                    }
+                }
             }
         }
     }
@@ -261,6 +338,9 @@ fn switch_placement(graph: &Graph, mode: PlacementMode) -> Graph {
                     offset_from_path: 0.0,
                 }),
                 grid_input: None,
+                smoke_domain: None,
+                smoke_source: None,
+                smoke_solver: None,
             });
             g.edges.push(crate::graph::Edge {
                 from: mesh_id.clone(),
@@ -289,6 +369,9 @@ fn switch_placement(graph: &Graph, mode: PlacementMode) -> Graph {
                 building_params: None,
                 path_input: None,
                 grid_input: Some(GridInput::default()),
+                smoke_domain: None,
+                smoke_source: None,
+                smoke_solver: None,
             });
             g.edges.push(crate::graph::Edge {
                 from: mesh_id.clone(),
@@ -396,6 +479,10 @@ fn summarize_intents(intents: &[PromptIntent], edits: &[GraphEdit]) -> String {
             }
             GraphEdit::SwitchPlacement { mode } => format!("Placement → {}", mode_label(*mode)),
             GraphEdit::SetGraphName { name } => format!("Graph name → {}", name),
+            GraphEdit::SetSmokeParams { source, solver, .. } => format!(
+                "Smoke → emission {:.1}, {} steps",
+                source.emission_rate, solver.steps
+            ),
         })
         .collect();
     parts.join("; ")
@@ -450,9 +537,31 @@ mod tests {
     }
 
     #[test]
-    fn switches_to_grid() {
-        let graph = Graph::shop_street_preset();
-        let result = apply_prompt(&graph, "グリッド配置");
-        assert!(result.graph.nodes.iter().any(|n| n.kind == NodeKind::FillGrid));
+    fn interprets_smoke_jp() {
+        let intents = interpret_prompt("煙のプレビュー");
+        assert!(intents.iter().any(|i| matches!(
+            i,
+            PromptIntent::LoadPreset { preset_id } if preset_id == "smoke_puff"
+        )));
+    }
+
+    #[test]
+    fn applies_more_smoke() {
+        let graph = Graph::smoke_puff_preset();
+        let result = apply_prompt(&graph, "もっと煙");
+        let solver = result
+            .graph
+            .nodes
+            .iter()
+            .find(|n| n.kind == NodeKind::SmokeSolver)
+            .and_then(|n| n.smoke_solver)
+            .expect("solver");
+        let orig = graph
+            .nodes
+            .iter()
+            .find(|n| n.kind == NodeKind::SmokeSolver)
+            .and_then(|n| n.smoke_solver)
+            .expect("orig");
+        assert!(solver.steps > orig.steps);
     }
 }

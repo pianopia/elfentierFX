@@ -7,6 +7,8 @@ import type {
   ExportResult,
   Graph,
   PresetInfo,
+  SetSmokeParamsRequest,
+  SmokeExportResult,
   ViewportMesh,
 } from "../types/graph";
 
@@ -22,10 +24,15 @@ export const agentApi = {
 
   getShopStreetPreset: () => invoke<Graph>("get_shop_street_preset"),
 
+  getSmokePuffPreset: () => invoke<Graph>("get_smoke_puff_preset"),
+
   setParams: (graph: Graph, params: BuildingParams, nodeId?: string) =>
     invoke<Graph>("set_params_command", {
       request: { graph, node_id: nodeId ?? null, params },
     }),
+
+  setSmokeParams: (request: SetSmokeParamsRequest) =>
+    invoke<Graph>("set_smoke_params_command", { request }),
 
   cook: (graph: Graph) => invoke<CookWithMeshResult>("cook", { graph }),
 
@@ -33,6 +40,11 @@ export const agentApi = {
 
   exportGltf: (graph: Graph, path: string) =>
     invoke<ExportResult>("export_gltf", { graph, path }),
+
+  exportSmokeDensity: (graph: Graph, path: string) =>
+    invoke<SmokeExportResult>("export_smoke_density_command", {
+      request: { graph, path },
+    }),
 
   applyPrompt: (graph: Graph, prompt: string) =>
     invoke<ApplyPromptResult>("apply_prompt_command", {

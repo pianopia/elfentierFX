@@ -1,10 +1,14 @@
 use elfentier_core::{
-    agent::{get_preset, list_presets, set_params, PresetInfo},
+    agent::{
+        export_smoke_density, get_preset, list_presets, set_params, set_smoke_params, PresetInfo,
+        SetSmokeParamsRequest,
+    },
     building::BuildingParams,
     core_version, create_box_mesh,
     explain::explain_graph,
     graph::{cook_and_export, cook_graph, Graph},
     prompt::{apply_prompt, ApplyPromptResult},
+    smoke::SmokeExportResult,
     viewport::{cook_viewport_mesh, ViewportMesh},
     MeshStats,
 };
@@ -17,6 +21,11 @@ struct CookResult {
     triangle_count: u32,
     instance_count: u32,
     graph_name: String,
+    smoke_resolution: Option<[u32; 3]>,
+    smoke_max_density: Option<f32>,
+    smoke_steps: Option<u32>,
+    smoke_frame_count: Option<u32>,
+    smoke_particle_count: Option<u32>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -46,6 +55,12 @@ struct ApplyPromptRequest {
     prompt: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct ExportSmokeRequest {
+    graph: Graph,
+    path: String,
+}
+
 #[tauri::command]
 fn get_core_version() -> String {
     core_version().to_string()
@@ -59,6 +74,11 @@ fn create_box_mesh_command() -> MeshStats {
 #[tauri::command]
 fn get_shop_street_preset() -> Graph {
     Graph::shop_street_preset()
+}
+
+#[tauri::command]
+fn get_smoke_puff_preset() -> Graph {
+    Graph::smoke_puff_preset()
 }
 
 #[tauri::command]
@@ -77,15 +97,14 @@ fn set_params_command(request: SetParamsRequest) -> Graph {
 }
 
 #[tauri::command]
+fn set_smoke_params_command(request: SetSmokeParamsRequest) -> Graph {
+    set_smoke_params(&request)
+}
+
+#[tauri::command]
 fn cook_city_graph(graph: Graph) -> Result<CookResult, String> {
     let result = cook_graph(&graph)?;
-    Ok(CookResult {
-        vertex_count: result.vertex_count,
-        index_count: result.index_count,
-        triangle_count: result.triangle_count,
-        instance_count: result.instance_count,
-        graph_name: result.graph_name,
-    })
+    Ok(map_cook_result(result))
 }
 
 #[tauri::command]
@@ -93,15 +112,24 @@ fn cook(graph: Graph) -> Result<CookWithMeshResult, String> {
     let stats = cook_graph(&graph)?;
     let mesh = cook_viewport_mesh(&graph)?;
     Ok(CookWithMeshResult {
-        stats: CookResult {
-            vertex_count: stats.vertex_count,
-            index_count: stats.index_count,
-            triangle_count: stats.triangle_count,
-            instance_count: stats.instance_count,
-            graph_name: stats.graph_name,
-        },
+        stats: map_cook_result(stats),
         mesh,
     })
+}
+
+fn map_cook_result(result: elfentier_core::graph::CookResult) -> CookResult {
+    CookResult {
+        vertex_count: result.vertex_count,
+        index_count: result.index_count,
+        triangle_count: result.triangle_count,
+        instance_count: result.instance_count,
+        graph_name: result.graph_name,
+        smoke_resolution: result.smoke_resolution,
+        smoke_max_density: result.smoke_max_density,
+        smoke_steps: result.smoke_steps,
+        smoke_frame_count: result.smoke_frame_count,
+        smoke_particle_count: result.smoke_particle_count,
+    }
 }
 
 #[tauri::command]
@@ -118,6 +146,11 @@ fn export_city_graph(graph: Graph, path: String) -> Result<ExportResult, String>
 #[tauri::command]
 fn export_gltf(graph: Graph, path: String) -> Result<ExportResult, String> {
     export_city_graph(graph, path)
+}
+
+#[tauri::command]
+fn export_smoke_density_command(request: ExportSmokeRequest) -> Result<SmokeExportResult, String> {
+    export_smoke_density(&request.graph, &request.path)
 }
 
 #[tauri::command]
@@ -143,13 +176,16 @@ pub fn run() {
             get_core_version,
             create_box_mesh_command,
             get_shop_street_preset,
+            get_smoke_puff_preset,
             get_graph,
             list_presets_command,
             set_params_command,
+            set_smoke_params_command,
             cook_city_graph,
             cook,
             export_city_graph,
             export_gltf,
+            export_smoke_density_command,
             apply_prompt_command,
             explain_graph_command,
             load_preset,
