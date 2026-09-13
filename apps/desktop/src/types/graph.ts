@@ -172,6 +172,8 @@ export interface ViewportSmoke {
   frame_count: number;
   fps: number;
   stats: SmokeStats;
+  resolution?: [number, number, number];
+  density_frames?: number[][];
 }
 
 export interface LiquidStats {

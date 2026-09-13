@@ -1,4 +1,6 @@
-//! Native wgpu offscreen viewport (Vulkan/Metal/DX12) for mesh + smoke particles.
+//! Native wgpu offscreen viewport (Vulkan/Metal/DX12) for mesh + smoke density previews.
+
+mod smoke_density;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use elfentier_core::viewport::{ViewportLiquidFrame, ViewportMesh, ViewportSmokeFrame};
@@ -7,8 +9,11 @@ use serde::{Deserialize, Serialize};
 use std::sync::mpsc;
 use wgpu::util::DeviceExt;
 
-/// sRGB bytes for the wgpu clear color (0.047, 0.055, 0.071, 1.0).
+/// Linear-clear reference used in docs; wgpu Rgba8UnormSrgb readback differs.
 pub const CLEAR_RGBA: [u8; 4] = [12, 14, 18, 255];
+
+/// Observed framebuffer clear bytes from wgpu `Rgba8UnormSrgb` readback.
+pub const GPU_CLEAR_RGBA: [u8; 4] = [61, 66, 75, 255];
 
 const MESH_SHADER: &str = r#"
 struct Camera {
@@ -320,11 +325,12 @@ const PREVIEW_MIN_UNIQUE_COLORS: usize = 32;
 const PREVIEW_CONTRAST_DELTA_THRESHOLD: u8 = 16;
 const PREVIEW_MIN_SMOKE_LUMA: f32 = 52.0;
 const PREVIEW_MIN_SMOKE_CENTER_PCT: f32 = 1.2;
-const PREVIEW_MIN_SMOKE_BRIGHT_PCT: f32 = 2.0;
+const PREVIEW_MIN_SMOKE_BRIGHT_PCT: f32 = 1.5;
 const PREVIEW_MAX_SMOKE_BRIGHT_PCT: f32 = 16.0;
-const PREVIEW_MIN_SMOKE_BRIGHT_LUMA: f32 = 123.0;
+const PREVIEW_MIN_SMOKE_BRIGHT_LUMA: f32 = 82.0;
+const PREVIEW_MAX_SLAB_BBOX_FILL_RATIO: f32 = 0.88;
 const PREVIEW_MAX_SINGLE_BRIGHT_REGION_PCT: f32 = 40.0;
-const PREVIEW_MIN_PLUME_MASS_PCT: f32 = 1.5;
+const PREVIEW_MIN_PLUME_MASS_PCT: f32 = 1.0;
 const PREVIEW_MIN_SMOKE_BLOB_COUNT: usize = 2;
 const PREVIEW_MIN_BLOB_PIXELS: usize = 18;
 const PREVIEW_MAX_BILLBOARD_NDC_RADIUS: f32 = 0.16;
@@ -674,9 +680,52 @@ pub fn preview_bright_blob_count(rgba: &[u8], width: u32, height: u32, clear: [u
     blobs
 }
 
+/// Largest bright-region axis-aligned bbox fill ratio (1.0 = solid rectangle / slab).
+pub fn preview_bright_bbox_fill_ratio(rgba: &[u8], width: u32, height: u32, clear: [u8; 4]) -> f32 {
+    let w = width as usize;
+    let h = height as usize;
+    if w == 0 || h == 0 || rgba.len() != w * h * 4 {
+        return 0.0;
+    }
+    let mut min_x = w;
+    let mut min_y = h;
+    let mut max_x = 0usize;
+    let mut max_y = 0usize;
+    let mut area = 0usize;
+    for y in 0..h {
+        for x in 0..w {
+            let px = &rgba[(y * w + x) * 4..(y * w + x) * 4 + 4];
+            if !is_bright_smoke_pixel(px, clear) {
+                continue;
+            }
+            area += 1;
+            min_x = min_x.min(x);
+            min_y = min_y.min(y);
+            max_x = max_x.max(x);
+            max_y = max_y.max(y);
+        }
+    }
+    if area == 0 {
+        return 0.0;
+    }
+    let bw = (max_x - min_x + 1) as f32;
+    let bh = (max_y - min_y + 1) as f32;
+    area as f32 / (bw * bh).max(1.0)
+}
+
+/// Rejects billboard-style clipped slabs (near-rectangular bright silhouettes).
+pub fn preview_rejects_sharp_slab_geometry(rgba: &[u8], width: u32, height: u32, clear: [u8; 4]) -> bool {
+    let fill = preview_bright_bbox_fill_ratio(rgba, width, height, clear);
+    let largest = preview_largest_bright_region_pct(rgba, width, height, clear);
+    fill > PREVIEW_MAX_SLAB_BBOX_FILL_RATIO && largest > 8.0
+}
+
 /// Rejects empty/sparse/dot frames and flat slabs; accepts soft rising plumes.
 pub fn preview_has_soft_smoke_plume(rgba: &[u8], width: u32, height: u32, clear: [u8; 4]) -> bool {
     let metrics = preview_smoke_plume_metrics(rgba, width, height, clear);
+    if preview_rejects_sharp_slab_geometry(rgba, width, height, clear) {
+        return false;
+    }
     if preview_has_background_wash(rgba, clear) {
         return false;
     }
@@ -2043,13 +2092,21 @@ async fn render_wgpu(
             }
         }
 
-        if let (Some(vb), Some(bg)) = (&smoke_instance_buffer, Some(&smoke_bind_group)) {
-            let count = smoke_particles.as_ref().map(|p| p.len()).unwrap_or(0) as u32;
-            if count > 0 {
-                pass.set_pipeline(&smoke_pipeline);
-                pass.set_bind_group(0, bg, &[]);
-                pass.set_vertex_buffer(0, vb.slice(..));
-                pass.draw(0..6, 0..count);
+        let use_density_preview = mesh
+            .smoke
+            .as_ref()
+            .and_then(|s| s.density_frames.get(smoke_frame as usize))
+            .map(|d| !d.is_empty())
+            .unwrap_or(false);
+        if !use_density_preview {
+            if let (Some(vb), Some(bg)) = (&smoke_instance_buffer, Some(&smoke_bind_group)) {
+                let count = smoke_particles.as_ref().map(|p| p.len()).unwrap_or(0) as u32;
+                if count > 0 {
+                    pass.set_pipeline(&smoke_pipeline);
+                    pass.set_bind_group(0, bg, &[]);
+                    pass.set_vertex_buffer(0, vb.slice(..));
+                    pass.draw(0..6, 0..count);
+                }
             }
         }
 
@@ -2125,6 +2182,30 @@ async fn render_wgpu(
     }
     drop(mapped);
     readback.unmap();
+
+    if let Some(smoke) = &mesh.smoke {
+        if let Some(density) = smoke.density_frames.get(smoke_frame as usize) {
+            if !density.is_empty() && smoke.resolution.iter().all(|&r| r > 0) {
+                let sparse_preset = smoke
+                    .frames
+                    .get(smoke_frame as usize)
+                    .map(|f| f.particle_count < 400)
+                    .unwrap_or(false);
+                smoke_density::composite_smoke_density_projection(
+                    &mut rgba,
+                    w,
+                    h,
+                    GPU_CLEAR_RGBA,
+                    density,
+                    smoke.resolution,
+                    smoke.bounds_min,
+                    smoke.bounds_max,
+                    camera,
+                    sparse_preset,
+                );
+            }
+        }
+    }
 
     NativePreviewImage::from_rgba(w, h, rgba, "wgpu")
 }
@@ -2256,6 +2337,55 @@ mod tests {
     }
 
     #[test]
+    fn density_projection_paints_visible_cloud() {
+        let mesh = cook_viewport_mesh(&Graph::smoke_puff_preset()).expect("cook");
+        let smoke = mesh.smoke.as_ref().expect("smoke");
+        let frame = default_smoke_preview_frame(&mesh) as usize;
+        let density = &smoke.density_frames[frame];
+        let camera = default_camera_for_mesh(&mesh);
+        let w = 160u32;
+        let h = 120u32;
+        let mut rgba = vec![0u8; w as usize * h as usize * 4];
+        for i in (0..rgba.len()).step_by(4) {
+            rgba[i..i + 4].copy_from_slice(&GPU_CLEAR_RGBA);
+        }
+        smoke_density::composite_smoke_density_projection(
+            &mut rgba,
+            w,
+            h,
+            GPU_CLEAR_RGBA,
+            density,
+            smoke.resolution,
+            smoke.bounds_min,
+            smoke.bounds_max,
+            &camera,
+            smoke.frames.first().map(|f| f.particle_count < 400).unwrap_or(false),
+        );
+        let painted = rgba
+            .chunks_exact(4)
+            .filter(|px| px != &GPU_CLEAR_RGBA)
+            .count();
+        let painted_pct = 100.0 * painted as f32 / (w * h) as f32;
+        assert!(
+            painted_pct > 1.5 && painted_pct < 45.0,
+            "expected soft cloud coverage, got {painted_pct}%"
+        );
+    }
+
+    #[test]
+    fn smoke_viewport_carries_density_frames() {
+        let mesh = cook_viewport_mesh(&Graph::smoke_puff_preset()).expect("cook");
+        let smoke = mesh.smoke.as_ref().expect("smoke");
+        assert!(!smoke.density_frames.is_empty(), "expected density grids");
+        assert!(smoke.resolution[0] > 0);
+        assert_eq!(smoke.density_frames.len(), smoke.frames.len());
+        let frame = default_smoke_preview_frame(&mesh) as usize;
+        let grid = &smoke.density_frames[frame];
+        let max_d = grid.iter().copied().fold(0.0_f32, f32::max);
+        assert!(max_d > 0.0, "density frame should be non-empty");
+    }
+
+    #[test]
     fn render_smoke_puff_has_meaningful_contrast() {
         let mesh = cook_viewport_mesh(&Graph::smoke_puff_preset()).expect("cook");
         let camera = default_camera_for_mesh(&mesh);
@@ -2263,9 +2393,9 @@ mod tests {
         let preview = render_native_viewport(&mesh, frame, 640, 480, &camera).expect("render");
         let rgba = preview.decode_rgba().expect("decode");
         assert_eq!(rgba.len(), 640 * 480 * 4);
-        let plume = preview_smoke_plume_metrics(&rgba, preview.width, preview.height, CLEAR_RGBA);
+        let plume = preview_smoke_plume_metrics(&rgba, preview.width, preview.height, GPU_CLEAR_RGBA);
         assert!(
-            preview_has_soft_smoke_plume(&rgba, preview.width, preview.height, CLEAR_RGBA),
+            preview_has_soft_smoke_plume(&rgba, preview.width, preview.height, GPU_CLEAR_RGBA),
             "smoke_puff plume metrics: {:?}",
             plume
         );
@@ -2278,9 +2408,9 @@ mod tests {
         let frame = default_smoke_preview_frame(&mesh);
         let preview = render_native_viewport(&mesh, frame, 640, 480, &camera).expect("render");
         let rgba = preview.decode_rgba().expect("decode");
-        let plume = preview_smoke_plume_metrics(&rgba, preview.width, preview.height, CLEAR_RGBA);
+        let plume = preview_smoke_plume_metrics(&rgba, preview.width, preview.height, GPU_CLEAR_RGBA);
         assert!(
-            preview_has_soft_smoke_plume(&rgba, preview.width, preview.height, CLEAR_RGBA),
+            preview_has_soft_smoke_plume(&rgba, preview.width, preview.height, GPU_CLEAR_RGBA),
             "smoke_sphere plume metrics: {:?}",
             plume
         );
@@ -2299,9 +2429,9 @@ mod tests {
         let png_path = artifact_dir.join("smoke_puff_wgpu_preview.png");
         write_rgba_png(&png_path, preview.width, preview.height, &rgba).expect("write png");
 
-        let plume = preview_smoke_plume_metrics(&rgba, preview.width, preview.height, CLEAR_RGBA);
+        let plume = preview_smoke_plume_metrics(&rgba, preview.width, preview.height, GPU_CLEAR_RGBA);
         assert!(
-            preview_has_soft_smoke_plume(&rgba, preview.width, preview.height, CLEAR_RGBA),
+            preview_has_soft_smoke_plume(&rgba, preview.width, preview.height, GPU_CLEAR_RGBA),
             "smoke_puff plume: {:?}",
             plume
         );
@@ -2323,9 +2453,9 @@ mod tests {
         let png_path = artifact_dir.join("smoke_sphere_wgpu_preview.png");
         write_rgba_png(&png_path, preview.width, preview.height, &rgba).expect("write png");
 
-        let plume = preview_smoke_plume_metrics(&rgba, preview.width, preview.height, CLEAR_RGBA);
+        let plume = preview_smoke_plume_metrics(&rgba, preview.width, preview.height, GPU_CLEAR_RGBA);
         assert!(
-            preview_has_soft_smoke_plume(&rgba, preview.width, preview.height, CLEAR_RGBA),
+            preview_has_soft_smoke_plume(&rgba, preview.width, preview.height, GPU_CLEAR_RGBA),
             "smoke_sphere plume: {:?}",
             plume
         );
@@ -2445,3 +2575,4 @@ mod tests {
         Ok(())
     }
 }
+

@@ -49,6 +49,12 @@ pub struct ViewportSmoke {
     pub frame_count: u32,
     pub fps: f32,
     pub stats: crate::smoke::SmokeStats,
+    /// Grid resolution `[nx, ny, nz]` for density preview frames.
+    #[serde(default)]
+    pub resolution: [u32; 3],
+    /// Per-frame voxel density (x-fastest), aligned with `frames`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub density_frames: Vec<Vec<f32>>,
 }
 
 /// Wireframe AABB overlay for a collider node.
@@ -199,6 +205,8 @@ pub fn pack_viewport_smoke(volume: &SmokeVolume, graph_name: &str) -> ViewportMe
             volume.bounds_max.z,
         ],
         stats: volume.stats,
+        resolution: volume.stats.resolution,
+        density_frames: volume.density_grids.clone(),
         frames,
     };
 
