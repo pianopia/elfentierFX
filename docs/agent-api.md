@@ -9,18 +9,27 @@ JSON-serializable Tauri commands for external agents and the desktop UI. All com
 | `get_core_version` | — | `string` | Core library semver |
 | `get_graph` | `{ graph }` | `Graph` | Echo / validate a graph document |
 | `list_presets_command` | — | `PresetInfo[]` | Built-in starter graphs |
-| `load_preset` | `{ preset_id }` | `Graph` | Load preset by id (`shop_street`, `grid_block`, `smoke_puff`) |
+| `load_preset` | `{ preset_id }` | `Graph` | Load preset by id |
 | `get_shop_street_preset` | — | `Graph` | Shop street starter graph |
 | `get_smoke_puff_preset` | — | `Graph` | Smoke/gas puff starter graph |
+| `get_ocean_patch_preset` | — | `Graph` | Ocean patch FLIP liquid starter |
+| `get_waterfall_preset` | — | `Graph` | Waterfall FLIP liquid starter |
+| `get_flood_basin_preset` | — | `Graph` | Flood basin FLIP liquid starter |
 | `set_params_command` | `{ request: { graph, node_id?, params } }` | `Graph` | Update `BuildingParams` on a node |
 | `set_smoke_params_command` | `{ request: SetSmokeParamsRequest }` | `Graph` | Update smoke domain/source/solver nodes |
+| `set_liquid_params_command` | `{ request: SetLiquidParamsRequest }` | `Graph` | Update liquid domain/source/solver nodes |
 | `cook` | `{ graph }` | `CookWithMeshResult` | Cook graph + viewport buffers + native wgpu preview (wgpu-only; failures surface as `native_preview_error`) |
-| `render_native_viewport_command` | `{ request: RenderNativeRequest }` | `NativePreviewImage` | Re-render mesh/smoke frame with camera (orbit/animation) |
+| `render_native_viewport_command` | `{ request: RenderNativeRequest }` | `NativePreviewImage` | Re-render mesh/smoke/liquid frame with camera (orbit/animation) |
 | `cook_city_graph` | `{ graph }` | `CookResult` | Stats only (legacy) |
 | `export_gltf` | `{ graph, path }` | `ExportResult` | Export merged city `.glb` |
 | `export_smoke_density_command` | `{ request: { graph, path } }` | `SmokeExportResult` | Export smoke density atlas stub |
+| `export_liquid_cache_command` | `{ request: { graph, path } }` | `LiquidExportResult` | Export liquid particle cache stub |
 | `apply_prompt_command` | `{ request: { graph, prompt } }` | `ApplyPromptResult` | Local NL → graph edits |
 | `explain_graph_command` | `{ graph }` | `string` | Template graph summary |
+
+### Preset ids
+
+`shop_street`, `grid_block`, `smoke_puff`, `ocean_patch`, `waterfall`, `flood_basin`
 
 ## Graph document
 
@@ -50,12 +59,14 @@ JSON-serializable Tauri commands for external agents and the desktop UI. All com
 
 **City:** `building_params`, `building_mesh`, `place_along_path`, `fill_grid`, `merge_instances`, `city_root`
 
-**Smoke (Phase 1):** `smoke_domain`, `smoke_source`, `smoke_solver`, `smoke_root`
+**Smoke:** `smoke_domain`, `smoke_source`, `smoke_solver`, `smoke_root`
 
-Smoke preset chain:
+**Liquid (FLIP Phase 1):** `liquid_domain`, `liquid_source`, `liquid_solver`, `liquid_root`
+
+Liquid preset chain:
 
 ```
-smoke_domain → smoke_source → smoke_solver → smoke_root
+liquid_domain → liquid_source → liquid_solver → liquid_root
 ```
 
 ### Smoke params (on nodes)
@@ -98,40 +109,84 @@ smoke_domain → smoke_source → smoke_solver → smoke_root
 }
 ```
 
+### Liquid params (on nodes)
+
+`liquid_domain`:
+
+```json
+{
+  "resolution": 22,
+  "bounds_min": { "x": -8, "y": 0, "z": -8 },
+  "bounds_max": { "x": 8, "y": 3.5, "z": 8 },
+  "seed": 21,
+  "initial_particles": 2400,
+  "particle_radius": 0.14
+}
+```
+
+`liquid_source`:
+
+```json
+{
+  "position": { "x": 0, "y": 9, "z": 0 },
+  "radius": 0.7,
+  "emission_rate": 12,
+  "velocity": { "x": 0, "y": -3.5, "z": 0 },
+  "active_until_step": 0
+}
+```
+
+`liquid_solver`:
+
+```json
+{
+  "steps": 72,
+  "frame_stride": 3,
+  "gravity": 12,
+  "flip_ratio": 0.97,
+  "viscosity": 0.01,
+  "pressure_iterations": 22,
+  "wave_amplitude": 0,
+  "wave_frequency": 1.2,
+  "terrain_height": 0,
+  "max_particles": 14000
+}
+```
+
 ## Cook viewport mesh (`cook`)
 
-Returns instanced geometry for city graphs, or animated smoke impostor particles for smoke graphs:
+Returns instanced geometry for city graphs, animated smoke impostors, or animated liquid particles:
 
 ```json
 {
   "stats": {
     "vertex_count": 0,
     "instance_count": 0,
-    "graph_name": "Smoke Puff",
-    "smoke_resolution": [24, 24, 24],
-    "smoke_max_density": 0.42,
-    "smoke_steps": 48,
-    "smoke_frame_count": 13,
-    "smoke_particle_count": 842
+    "graph_name": "Ocean Patch",
+    "liquid_resolution": [22, 22, 22],
+    "liquid_steps": 48,
+    "liquid_frame_count": 13,
+    "liquid_particle_count": 2400,
+    "liquid_max_speed": 2.4
   },
   "mesh": {
     "positions": [],
     "indices": [],
     "instance_matrices": [1, 0, 0, 0, "..."],
-    "smoke": {
+    "liquid": {
       "frame_count": 13,
       "fps": 12,
-      "bounds_min": [-4, 0, -4],
-      "bounds_max": [4, 8, 4],
+      "bounds_min": [-8, 0, -8],
+      "bounds_max": [8, 3.5, 8],
       "frames": [
         {
-          "particle_count": 842,
+          "particle_count": 2400,
           "positions": [0.1, 1.2, 0.0, "..."],
-          "sizes": [0.35, "..."],
-          "opacities": [0.5, "..."]
+          "radii": [0.14, "..."],
+          "opacities": [0.7, "..."]
         }
       ],
-      "stats": { "resolution": [24, 24, 24], "max_density": 0.42, "step_count": 48 }
+      "stats": { "resolution": [22, 22, 22], "step_count": 48, "max_speed": 2.4 }
     }
   }
 }
@@ -139,7 +194,8 @@ Returns instanced geometry for city graphs, or animated smoke impostor particles
 
 - City graphs: `positions` / `indices` / `instance_matrices` as before.
 - Smoke graphs: `smoke.frames[]` holds soft particle impostors; viewport autoplays at `smoke.fps`.
-- Realtime preview is **wgpu-only**. On init/render failure, `native_preview` is null and `native_preview_error` carries the error string for the UI (no WebGL/Three.js fallback).
+- Liquid graphs: `liquid.frames[]` holds FLIP particles with radii; viewport autoplays at `liquid.fps`.
+- Realtime preview is **wgpu-only**. On init/render failure, `native_preview` is null and `native_preview_error` carries the error string for the UI (no WebGL fallback).
 
 Export (`export_gltf`) writes a **merged** mesh for city graphs only.
 
@@ -158,6 +214,21 @@ Unity-oriented stub: writes a small header plus raw `f32` density atlas bytes.
 
 Format: text header (`# elfentier smoke density atlas v1`) followed by little-endian `f32` data (XY slices, frame-major). Suitable for flipbook or 3D texture import in Unity.
 
+## Liquid particle cache export (`export_liquid_cache_command`)
+
+Unity-oriented stub: per-frame particle positions and radii.
+
+```json
+{
+  "path": "/tmp/elfentier_liquid_cache.raw",
+  "frame_count": 25,
+  "byte_len": 384000,
+  "format": "elfentier_liquid_cache_v1"
+}
+```
+
+Format: text header (`# elfentier liquid particle cache v1`) followed by little-endian `f32` tuples `[x, y, z, radius]` per particle, frame-major. Import as point cache or mesh via Unity VFX Graph / custom importer.
+
 ## Prompt interpreter (`apply_prompt_command`)
 
 Local rule-based mapping (JP + EN). Designed so a cloud LLM can later emit the same `GraphEdit` list.
@@ -168,6 +239,11 @@ Example phrases:
 |--------|--------|
 | `商店街` / `shop street` | Load shop street preset |
 | `煙` / `smoke` / `smoke puff` | Load smoke puff preset |
+| `海` / `ocean` / `ocean patch` | Load ocean patch preset |
+| `滝` / `waterfall` | Load waterfall preset |
+| `洪水` / `flood` / `flood basin` | Load flood basin preset |
+| `水位上げ` / `more water` / `もっと水` | Increase liquid emission + steps |
+| `もっと激しく` / `more intense` / `splashier` | Increase liquid intensity + waves |
 | `もっと煙` / `more smoke` | Increase emission + simulation steps |
 | `階数を5に` / `5 floors` | Set floor count |
 | `seed変え` / `change seed` | Randomize seed |
@@ -179,9 +255,9 @@ Response shape:
 ```json
 {
   "graph": { "...": "updated Graph" },
-  "intents": [{ "load_preset": { "preset_id": "smoke_puff" } }],
-  "edits": [{ "load_preset": { "preset_id": "smoke_puff" } }],
-  "summary": "Loaded preset smoke_puff"
+  "intents": [{ "load_preset": { "preset_id": "ocean_patch" } }],
+  "edits": [{ "load_preset": { "preset_id": "ocean_patch" } }],
+  "summary": "Loaded preset ocean_patch"
 }
 ```
 
@@ -189,10 +265,10 @@ Response shape:
 
 1. **Graph is source of truth** — prompts only mutate the graph JSON.
 2. **Cook is deterministic** — same graph + seed always yields the same simulation.
-3. Agents should call `apply_prompt_command` → `cook` → optionally `export_gltf` or `export_smoke_density_command`.
+3. Agents should call `apply_prompt_command` → `cook` → optionally `export_gltf`, `export_smoke_density_command`, or `export_liquid_cache_command`.
 
 ## Future
 
 - MCP server wrapping these commands (not implemented in Alpha 2).
-- OpenVDB volume I/O and FLIP liquids (Phase 2).
+- OpenVDB volume I/O for dense fields.
 - Optional cloud LLM backend behind `apply_prompt` (stub only; no keys required today).

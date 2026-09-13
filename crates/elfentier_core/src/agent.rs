@@ -1,7 +1,8 @@
 //! Agent-oriented preset and parameter helpers.
 
 use crate::building::BuildingParams;
-use crate::graph::{evaluate_smoke_volume, graph_mode, Graph, GraphMode, NodeKind};
+use crate::graph::{evaluate_liquid_volume, evaluate_smoke_volume, graph_mode, Graph, GraphMode, NodeKind};
+use crate::liquid::{export_particle_cache, LiquidDomainInput, LiquidSolverInput, LiquidSourceInput};
 use crate::smoke::{export_density_atlas, SmokeDomainInput, SmokeSolverInput, SmokeSourceInput};
 use serde::{Deserialize, Serialize};
 
@@ -22,6 +23,15 @@ pub struct SetSmokeParamsRequest {
     pub solver: Option<SmokeSolverInput>,
 }
 
+/// Liquid parameter update request for agents.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetLiquidParamsRequest {
+    pub graph: Graph,
+    pub domain: Option<LiquidDomainInput>,
+    pub source: Option<LiquidSourceInput>,
+    pub solver: Option<LiquidSolverInput>,
+}
+
 /// Lists available graph presets for agents and UI.
 pub fn list_presets() -> Vec<PresetInfo> {
     vec![
@@ -40,6 +50,21 @@ pub fn list_presets() -> Vec<PresetInfo> {
             name: "Smoke Puff".into(),
             description: "Eulerian gas/smoke simulation with viewport particle preview".into(),
         },
+        PresetInfo {
+            id: "ocean_patch".into(),
+            name: "Ocean Patch".into(),
+            description: "Wide FLIP liquid body with gentle surface wave forcing".into(),
+        },
+        PresetInfo {
+            id: "waterfall".into(),
+            name: "Waterfall".into(),
+            description: "Elevated liquid source with gravity-driven cascade".into(),
+        },
+        PresetInfo {
+            id: "flood_basin".into(),
+            name: "Flood Basin".into(),
+            description: "Basin fill from inflow source over time".into(),
+        },
     ]
 }
 
@@ -49,6 +74,9 @@ pub fn get_preset(id: &str) -> Option<Graph> {
         "shop_street" => Some(Graph::shop_street_preset()),
         "grid_block" => Some(Graph::grid_block_preset()),
         "smoke_puff" => Some(Graph::smoke_puff_preset()),
+        "ocean_patch" => Some(Graph::ocean_patch_preset()),
+        "waterfall" => Some(Graph::waterfall_preset()),
+        "flood_basin" => Some(Graph::flood_basin_preset()),
         _ => None,
     }
 }
@@ -92,6 +120,29 @@ pub fn set_smoke_params(request: &SetSmokeParamsRequest) -> Graph {
     g
 }
 
+/// Updates liquid domain/source/solver nodes on a liquid graph.
+pub fn set_liquid_params(request: &SetLiquidParamsRequest) -> Graph {
+    let mut g = request.graph.clone();
+    for node in &mut g.nodes {
+        if let Some(domain) = request.domain {
+            if node.kind == NodeKind::LiquidDomain {
+                node.liquid_domain = Some(domain);
+            }
+        }
+        if let Some(source) = request.source {
+            if node.kind == NodeKind::LiquidSource {
+                node.liquid_source = Some(source);
+            }
+        }
+        if let Some(solver) = request.solver {
+            if node.kind == NodeKind::LiquidSolver {
+                node.liquid_solver = Some(solver);
+            }
+        }
+    }
+    g
+}
+
 /// Exports a smoke density atlas stub for Unity/game-engine handoff.
 pub fn export_smoke_density(graph: &Graph, path: &str) -> Result<crate::smoke::SmokeExportResult, String> {
     if graph_mode(graph) != GraphMode::Smoke {
@@ -99,4 +150,13 @@ pub fn export_smoke_density(graph: &Graph, path: &str) -> Result<crate::smoke::S
     }
     let volume = evaluate_smoke_volume(graph)?;
     export_density_atlas(&volume, path).map_err(|e| e.to_string())
+}
+
+/// Exports a liquid particle cache stub for Unity/game-engine handoff.
+pub fn export_liquid_cache(graph: &Graph, path: &str) -> Result<crate::liquid::LiquidExportResult, String> {
+    if graph_mode(graph) != GraphMode::Liquid {
+        return Err("graph is not a liquid graph (missing LiquidRoot)".into());
+    }
+    let volume = evaluate_liquid_volume(graph)?;
+    export_particle_cache(&volume, path).map_err(|e| e.to_string())
 }

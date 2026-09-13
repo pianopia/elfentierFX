@@ -9,6 +9,7 @@ import type {
   Graph,
   NativePreviewImage,
   NativeViewportCamera,
+  LiquidExportResult,
   SmokeExportResult,
   ViewportMesh,
 } from "./types/graph";
@@ -16,6 +17,10 @@ import Viewport3D from "./viewport/Viewport3D";
 import "./App.css";
 
 function formatCookStatus(stats: CookResult): string {
+  if (stats.liquid_particle_count != null && stats.liquid_particle_count > 0) {
+    const res = stats.liquid_resolution?.join("×") ?? "?";
+    return `Cooked "${stats.graph_name}": liquid ${res} · max v ${stats.liquid_max_speed?.toFixed(2)} · ${stats.liquid_steps} steps · ${stats.liquid_frame_count} frames · ${stats.liquid_particle_count} particles`;
+  }
   if (stats.smoke_particle_count != null && stats.smoke_particle_count > 0) {
     const res = stats.smoke_resolution?.join("×") ?? "?";
     return `Cooked "${stats.graph_name}": smoke ${res} · max ρ ${stats.smoke_max_density?.toFixed(2)} · ${stats.smoke_steps} steps · ${stats.smoke_frame_count} frames · ${stats.smoke_particle_count} particles`;
@@ -35,12 +40,14 @@ function App() {
   const [viewportError, setViewportError] = useState<string | null>(null);
   const [exportResult, setExportResult] = useState<ExportResult | null>(null);
   const [smokeExportResult, setSmokeExportResult] = useState<SmokeExportResult | null>(null);
+  const [liquidExportResult, setLiquidExportResult] = useState<LiquidExportResult | null>(null);
   const [promptSummary, setPromptSummary] = useState("");
   const [explainText, setExplainText] = useState("");
   const [busy, setBusy] = useState(false);
   const graphRef = useRef<Graph | null>(null);
 
   const isSmokeGraph = graph?.nodes.some((n) => n.kind === "smoke_root") ?? false;
+  const isLiquidGraph = graph?.nodes.some((n) => n.kind === "liquid_root") ?? false;
 
   const refreshExplain = useCallback(async (g: Graph) => {
     try {
@@ -104,6 +111,7 @@ function App() {
         setViewportError(null);
         setExportResult(null);
         setSmokeExportResult(null);
+        setLiquidExportResult(null);
         setPromptSummary("");
         setStatus(`${label} loaded`);
         refreshExplain(nextPreset);
@@ -123,6 +131,21 @@ function App() {
 
   const handleLoadSmokePreset = useCallback(
     () => loadGraphPreset("Smoke puff preset", agentApi.getSmokePuffPreset),
+    [loadGraphPreset],
+  );
+
+  const handleLoadOceanPreset = useCallback(
+    () => loadGraphPreset("Ocean patch preset", agentApi.getOceanPatchPreset),
+    [loadGraphPreset],
+  );
+
+  const handleLoadWaterfallPreset = useCallback(
+    () => loadGraphPreset("Waterfall preset", agentApi.getWaterfallPreset),
+    [loadGraphPreset],
+  );
+
+  const handleLoadFloodPreset = useCallback(
+    () => loadGraphPreset("Flood basin preset", agentApi.getFloodBasinPreset),
     [loadGraphPreset],
   );
 
@@ -159,6 +182,23 @@ function App() {
       return;
     }
     setBusy(true);
+    if (isLiquidGraph) {
+      setStatus("Exporting liquid particle cache…");
+      try {
+        const path = "/tmp/elfentier_liquid_cache.raw";
+        const result = await agentApi.exportLiquidCache(current, path);
+        setLiquidExportResult(result);
+        setStatus(
+          `Exported liquid cache (${result.format}) → ${result.path} · ${result.frame_count} frames · ${result.byte_len} bytes`,
+        );
+      } catch (error) {
+        setStatus(`Export failed: ${String(error)}`);
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
     if (isSmokeGraph) {
       setStatus("Exporting smoke density atlas…");
       try {
@@ -189,7 +229,7 @@ function App() {
     } finally {
       setBusy(false);
     }
-  }, [isSmokeGraph]);
+  }, [isLiquidGraph, isSmokeGraph]);
 
   const handlePrompt = useCallback(
     async (prompt: string) => {
@@ -210,6 +250,7 @@ function App() {
         setViewportError(null);
         setExportResult(null);
         setSmokeExportResult(null);
+        setLiquidExportResult(null);
         setStatus(result.summary || "Prompt applied");
         refreshExplain(result.graph);
       } catch (error) {
@@ -230,7 +271,7 @@ function App() {
           <span className="brand-tag">Alpha 2</span>
         </div>
         <p className="brand-subtitle">
-          Building → city · smoke/gas fluids · 3D viewport · prompt-driven graph
+          Building → city · smoke/gas · FLIP liquids · 3D viewport · prompt-driven graph
         </p>
       </header>
 
@@ -281,17 +322,43 @@ function App() {
           >
             煙 · Smoke puff
           </button>
+          <button
+            type="button"
+            className="action-button secondary"
+            onClick={handleLoadOceanPreset}
+            disabled={busy}
+          >
+            海 · Ocean
+          </button>
+          <button
+            type="button"
+            className="action-button secondary"
+            onClick={handleLoadWaterfallPreset}
+            disabled={busy}
+          >
+            滝 · Waterfall
+          </button>
+          <button
+            type="button"
+            className="action-button secondary"
+            onClick={handleLoadFloodPreset}
+            disabled={busy}
+          >
+            洪水 · Flood
+          </button>
           <button type="button" className="action-button" onClick={handleCook} disabled={busy}>
             Cook
           </button>
           <button type="button" className="action-button" onClick={handleExport} disabled={busy}>
-            {isSmokeGraph ? "Export smoke" : "Export glTF"}
+            {isLiquidGraph ? "Export liquid" : isSmokeGraph ? "Export smoke" : "Export glTF"}
           </button>
           {cookResult && (
             <span className="mesh-stats">
-              {cookResult.smoke_particle_count != null && cookResult.smoke_particle_count > 0
-                ? `${cookResult.smoke_particle_count} particles · ${cookResult.smoke_steps} steps`
-                : `${cookResult.instance_count} inst · ${cookResult.vertex_count}v · ${cookResult.triangle_count}t`}
+              {cookResult.liquid_particle_count != null && cookResult.liquid_particle_count > 0
+                ? `${cookResult.liquid_particle_count} liquid · ${cookResult.liquid_steps} steps`
+                : cookResult.smoke_particle_count != null && cookResult.smoke_particle_count > 0
+                  ? `${cookResult.smoke_particle_count} particles · ${cookResult.smoke_steps} steps`
+                  : `${cookResult.instance_count} inst · ${cookResult.vertex_count}v · ${cookResult.triangle_count}t`}
             </span>
           )}
           {exportResult && (
@@ -302,6 +369,11 @@ function App() {
           {smokeExportResult && (
             <span className="export-path" title={smokeExportResult.path}>
               smoke exported
+            </span>
+          )}
+          {liquidExportResult && (
+            <span className="export-path" title={liquidExportResult.path}>
+              liquid exported
             </span>
           )}
         </div>

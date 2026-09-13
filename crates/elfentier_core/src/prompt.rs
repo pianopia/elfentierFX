@@ -3,6 +3,7 @@
 use crate::building::BuildingParams;
 use crate::graph::{Graph, NodeId, NodeKind};
 use crate::placement::GridInput;
+use crate::liquid::{LiquidSolverInput, LiquidSourceInput};
 use crate::smoke::{SmokeSolverInput, SmokeSourceInput};
 use serde::{Deserialize, Serialize};
 
@@ -17,6 +18,7 @@ pub enum PromptIntent {
     SwitchPlacement { mode: PlacementMode },
     SetGraphName { name: String },
     IncreaseSmoke { emission_delta: f32, step_delta: u32 },
+    IncreaseLiquid { emission_delta: f32, wave_delta: f32, step_delta: u32 },
     Unknown { raw: String },
 }
 
@@ -41,6 +43,12 @@ pub enum GraphEdit {
         source: SmokeSourceInput,
         solver_node_id: String,
         solver: SmokeSolverInput,
+    },
+    SetLiquidParams {
+        source_node_id: String,
+        source: LiquidSourceInput,
+        solver_node_id: String,
+        solver: LiquidSolverInput,
     },
 }
 
@@ -86,6 +94,71 @@ pub fn interpret_prompt(text: &str) -> Vec<PromptIntent> {
         intents.push(PromptIntent::IncreaseSmoke {
             emission_delta: 1.2,
             step_delta: 12,
+        });
+    }
+
+    // Ocean / 海
+    if contains_any(
+        &normalized,
+        &["海", "ocean", "ocean patch", "ocean_patch", "大洋", "海面"],
+    ) {
+        intents.push(PromptIntent::LoadPreset {
+            preset_id: "ocean_patch".into(),
+        });
+    }
+
+    // Waterfall / 滝
+    if contains_any(
+        &normalized,
+        &["滝", "waterfall", "cascade", "瀑布"],
+    ) {
+        intents.push(PromptIntent::LoadPreset {
+            preset_id: "waterfall".into(),
+        });
+    }
+
+    // Flood / 洪水
+    if contains_any(
+        &normalized,
+        &["洪水", "flood", "flood basin", "flood_basin", "浸水", "水害"],
+    ) {
+        intents.push(PromptIntent::LoadPreset {
+            preset_id: "flood_basin".into(),
+        });
+    }
+
+    // Liquid intensity / 水位上げ / もっと激しく
+    if contains_any(
+        &normalized,
+        &[
+            "水位上げ",
+            "raise water",
+            "more water",
+            "水を増",
+            "もっと水",
+            "more liquid",
+        ],
+    ) {
+        intents.push(PromptIntent::IncreaseLiquid {
+            emission_delta: 4.0,
+            wave_delta: 0.0,
+            step_delta: 12,
+        });
+    } else if contains_any(
+        &normalized,
+        &[
+            "もっと激しく",
+            "more intense",
+            "splashier",
+            "激しく",
+            "波を大きく",
+            "bigger waves",
+        ],
+    ) {
+        intents.push(PromptIntent::IncreaseLiquid {
+            emission_delta: 2.0,
+            wave_delta: 0.15,
+            step_delta: 8,
         });
     }
 
@@ -154,6 +227,8 @@ pub fn intents_to_edits(graph: &Graph, intents: &[PromptIntent]) -> Vec<GraphEdi
         .find(|n| n.kind == NodeKind::BuildingParams);
     let smoke_source_node = graph.nodes.iter().find(|n| n.kind == NodeKind::SmokeSource);
     let smoke_solver_node = graph.nodes.iter().find(|n| n.kind == NodeKind::SmokeSolver);
+    let liquid_source_node = graph.nodes.iter().find(|n| n.kind == NodeKind::LiquidSource);
+    let liquid_solver_node = graph.nodes.iter().find(|n| n.kind == NodeKind::LiquidSolver);
     let mut edits = Vec::new();
 
     for intent in intents {
@@ -224,6 +299,30 @@ pub fn intents_to_edits(graph: &Graph, intents: &[PromptIntent]) -> Vec<GraphEdi
                     });
                 }
             }
+            PromptIntent::IncreaseLiquid {
+                emission_delta,
+                wave_delta,
+                step_delta,
+            } => {
+                if let (Some(src), Some(slv)) = (liquid_source_node, liquid_solver_node) {
+                    let source = src.liquid_source.unwrap_or_default();
+                    let solver = slv.liquid_solver.unwrap_or_default();
+                    edits.push(GraphEdit::SetLiquidParams {
+                        source_node_id: src.id.0.clone(),
+                        source: LiquidSourceInput {
+                            emission_rate: source.emission_rate + emission_delta,
+                            ..source
+                        },
+                        solver_node_id: slv.id.0.clone(),
+                        solver: LiquidSolverInput {
+                            steps: solver.steps + step_delta,
+                            wave_amplitude: solver.wave_amplitude + wave_delta,
+                            gravity: solver.gravity + wave_delta * 2.0,
+                            ..solver
+                        },
+                    });
+                }
+            }
             PromptIntent::Unknown { .. } => {}
         }
     }
@@ -244,6 +343,12 @@ pub fn apply_edits(graph: &Graph, edits: &[GraphEdit]) -> Graph {
                     result = Graph::grid_block_preset();
                 } else if preset_id == "smoke_puff" {
                     result = Graph::smoke_puff_preset();
+                } else if preset_id == "ocean_patch" {
+                    result = Graph::ocean_patch_preset();
+                } else if preset_id == "waterfall" {
+                    result = Graph::waterfall_preset();
+                } else if preset_id == "flood_basin" {
+                    result = Graph::flood_basin_preset();
                 }
             }
             GraphEdit::SetBuildingParams { node_id, params } => {
@@ -271,6 +376,21 @@ pub fn apply_edits(graph: &Graph, edits: &[GraphEdit]) -> Graph {
                     }
                     if node.id.0 == *solver_node_id {
                         node.smoke_solver = Some(*solver);
+                    }
+                }
+            }
+            GraphEdit::SetLiquidParams {
+                source_node_id,
+                source,
+                solver_node_id,
+                solver,
+            } => {
+                for node in &mut result.nodes {
+                    if node.id.0 == *source_node_id {
+                        node.liquid_source = Some(*source);
+                    }
+                    if node.id.0 == *solver_node_id {
+                        node.liquid_solver = Some(*solver);
                     }
                 }
             }
@@ -341,6 +461,9 @@ fn switch_placement(graph: &Graph, mode: PlacementMode) -> Graph {
                 smoke_domain: None,
                 smoke_source: None,
                 smoke_solver: None,
+                liquid_domain: None,
+                liquid_source: None,
+                liquid_solver: None,
             });
             g.edges.push(crate::graph::Edge {
                 from: mesh_id.clone(),
@@ -372,6 +495,9 @@ fn switch_placement(graph: &Graph, mode: PlacementMode) -> Graph {
                 smoke_domain: None,
                 smoke_source: None,
                 smoke_solver: None,
+                liquid_domain: None,
+                liquid_source: None,
+                liquid_solver: None,
             });
             g.edges.push(crate::graph::Edge {
                 from: mesh_id.clone(),
@@ -483,6 +609,10 @@ fn summarize_intents(intents: &[PromptIntent], edits: &[GraphEdit]) -> String {
                 "Smoke → emission {:.1}, {} steps",
                 source.emission_rate, solver.steps
             ),
+            GraphEdit::SetLiquidParams { source, solver, .. } => format!(
+                "Liquid → emission {:.1}, wave {:.2}, {} steps",
+                source.emission_rate, solver.wave_amplitude, solver.steps
+            ),
         })
         .collect();
     parts.join("; ")
@@ -543,6 +673,53 @@ mod tests {
             i,
             PromptIntent::LoadPreset { preset_id } if preset_id == "smoke_puff"
         )));
+    }
+
+    #[test]
+    fn interprets_ocean_jp() {
+        let intents = interpret_prompt("海のプレビュー");
+        assert!(intents.iter().any(|i| matches!(
+            i,
+            PromptIntent::LoadPreset { preset_id } if preset_id == "ocean_patch"
+        )));
+    }
+
+    #[test]
+    fn interprets_waterfall_en() {
+        let intents = interpret_prompt("load waterfall preset");
+        assert!(intents.iter().any(|i| matches!(
+            i,
+            PromptIntent::LoadPreset { preset_id } if preset_id == "waterfall"
+        )));
+    }
+
+    #[test]
+    fn interprets_flood_jp() {
+        let intents = interpret_prompt("洪水シミュレーション");
+        assert!(intents.iter().any(|i| matches!(
+            i,
+            PromptIntent::LoadPreset { preset_id } if preset_id == "flood_basin"
+        )));
+    }
+
+    #[test]
+    fn applies_more_liquid_intensity() {
+        let graph = Graph::waterfall_preset();
+        let result = apply_prompt(&graph, "もっと激しく");
+        let solver = result
+            .graph
+            .nodes
+            .iter()
+            .find(|n| n.kind == NodeKind::LiquidSolver)
+            .and_then(|n| n.liquid_solver)
+            .expect("solver");
+        let orig = graph
+            .nodes
+            .iter()
+            .find(|n| n.kind == NodeKind::LiquidSolver)
+            .and_then(|n| n.liquid_solver)
+            .expect("orig");
+        assert!(solver.steps > orig.steps || solver.gravity > orig.gravity);
     }
 
     #[test]

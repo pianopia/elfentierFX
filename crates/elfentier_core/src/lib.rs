@@ -8,6 +8,7 @@ pub mod building;
 pub mod explain;
 pub mod export;
 pub mod graph;
+pub mod liquid;
 pub mod mesh;
 pub mod placement;
 pub mod prompt;

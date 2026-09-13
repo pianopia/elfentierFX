@@ -58,6 +58,29 @@ pub fn explain_graph(graph: &Graph) -> String {
         _ => lines.push("Placement — direct mesh (no instancing node)".into()),
     }
 
+    if graph.nodes.iter().any(|n| n.kind == NodeKind::LiquidDomain) {
+        if let Some(node) = graph.nodes.iter().find(|n| n.kind == NodeKind::LiquidDomain) {
+            let domain = node.liquid_domain.unwrap_or_default();
+            lines.push(format!(
+                "Liquid domain — {}³ grid, {} initial particles, radius {:.2}m, seed {}",
+                domain.resolution,
+                domain.initial_particles,
+                domain.particle_radius,
+                domain.seed,
+            ));
+        }
+        if let Some(node) = graph.nodes.iter().find(|n| n.kind == NodeKind::LiquidSolver) {
+            let solver = node.liquid_solver.unwrap_or_default();
+            lines.push(format!(
+                "Liquid solver — {} steps, gravity {:.1}, FLIP {:.0}%, wave {:.2}",
+                solver.steps,
+                solver.gravity,
+                solver.flip_ratio * 100.0,
+                solver.wave_amplitude,
+            ));
+        }
+    }
+
     if graph.nodes.iter().any(|n| n.kind == NodeKind::SmokeDomain) {
         if let Some(node) = graph.nodes.iter().find(|n| n.kind == NodeKind::SmokeDomain) {
             let domain = node.smoke_domain.unwrap_or_default();
@@ -108,5 +131,12 @@ mod tests {
         let text = explain_graph(&Graph::smoke_puff_preset());
         assert!(text.contains("Smoke Puff"));
         assert!(text.contains("Smoke domain"));
+    }
+
+    #[test]
+    fn explains_ocean_preset() {
+        let text = explain_graph(&Graph::ocean_patch_preset());
+        assert!(text.contains("Ocean Patch"));
+        assert!(text.contains("Liquid domain"));
     }
 }

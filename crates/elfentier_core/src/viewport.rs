@@ -1,6 +1,7 @@
 //! Viewport-ready mesh payload with GPU instancing and smoke particle support.
 
-use crate::graph::{evaluate_city_instanced, evaluate_smoke_volume, Graph, GraphMode};
+use crate::graph::{evaluate_city_instanced, evaluate_liquid_volume, evaluate_smoke_volume, Graph, GraphMode};
+use crate::liquid::LiquidVolume;
 use crate::placement::InstanceTransform;
 use crate::mesh::Mesh;
 use crate::smoke::SmokeVolume;
@@ -16,6 +17,26 @@ pub struct ViewportSmokeFrame {
     pub sizes: Vec<f32>,
     pub opacities: Vec<f32>,
     pub particle_count: u32,
+}
+
+/// One animation frame of liquid particles.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ViewportLiquidFrame {
+    pub positions: Vec<f32>,
+    pub radii: Vec<f32>,
+    pub opacities: Vec<f32>,
+    pub particle_count: u32,
+}
+
+/// Animated liquid preview for the 3D viewport.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ViewportLiquid {
+    pub frames: Vec<ViewportLiquidFrame>,
+    pub bounds_min: [f32; 3],
+    pub bounds_max: [f32; 3],
+    pub frame_count: u32,
+    pub fps: f32,
+    pub stats: crate::liquid::LiquidStats,
 }
 
 /// Animated smoke preview for the 3D viewport.
@@ -46,6 +67,9 @@ pub struct ViewportMesh {
     /// Present when the graph cooks a smoke volume instead of (or alongside) city geometry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub smoke: Option<ViewportSmoke>,
+    /// Present when the graph cooks a liquid volume.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub liquid: Option<ViewportLiquid>,
 }
 
 /// Converts an instance transform to a column-major 4×4 matrix matching mesh transform math.
@@ -81,6 +105,7 @@ pub fn pack_viewport_mesh(
     instances: &[InstanceTransform],
     graph_name: &str,
     smoke: Option<ViewportSmoke>,
+    liquid: Option<ViewportLiquid>,
 ) -> ViewportMesh {
     let positions: Vec<f32> = base
         .positions
@@ -110,6 +135,7 @@ pub fn pack_viewport_mesh(
         instance_count: inst_count as u32,
         graph_name: graph_name.to_string(),
         smoke,
+        liquid,
     }
 }
 
@@ -142,19 +168,55 @@ pub fn pack_viewport_smoke(volume: &SmokeVolume, graph_name: &str) -> ViewportMe
         frames,
     };
 
-    pack_viewport_mesh(&Mesh::unnamed(), &[], graph_name, Some(smoke))
+    pack_viewport_mesh(&Mesh::unnamed(), &[], graph_name, Some(smoke), None)
+}
+
+pub fn pack_viewport_liquid(volume: &LiquidVolume, graph_name: &str) -> ViewportMesh {
+    let frames: Vec<ViewportLiquidFrame> = volume
+        .frames
+        .iter()
+        .map(|f| ViewportLiquidFrame {
+            positions: f.positions.clone(),
+            radii: f.radii.clone(),
+            opacities: f.opacities.clone(),
+            particle_count: f.particle_count,
+        })
+        .collect();
+
+    let liquid = ViewportLiquid {
+        frame_count: frames.len() as u32,
+        fps: 12.0,
+        bounds_min: [
+            volume.bounds_min.x,
+            volume.bounds_min.y,
+            volume.bounds_min.z,
+        ],
+        bounds_max: [
+            volume.bounds_max.x,
+            volume.bounds_max.y,
+            volume.bounds_max.z,
+        ],
+        stats: volume.stats,
+        frames,
+    };
+
+    pack_viewport_mesh(&Mesh::unnamed(), &[], graph_name, None, Some(liquid))
 }
 
 /// Evaluates the graph and returns viewport buffers (city mesh and/or smoke).
 pub fn cook_viewport_mesh(graph: &Graph) -> Result<ViewportMesh, String> {
     match graph_mode(graph) {
+        GraphMode::Liquid => {
+            let volume = evaluate_liquid_volume(graph)?;
+            Ok(pack_viewport_liquid(&volume, &graph.name))
+        }
         GraphMode::Smoke => {
             let volume = evaluate_smoke_volume(graph)?;
             Ok(pack_viewport_smoke(&volume, &graph.name))
         }
         GraphMode::City => {
             let city = evaluate_city_instanced(graph)?;
-            Ok(pack_viewport_mesh(&city.base_mesh, &city.instances, &graph.name, None))
+            Ok(pack_viewport_mesh(&city.base_mesh, &city.instances, &graph.name, None, None))
         }
     }
 }
@@ -186,6 +248,15 @@ mod tests {
         let smoke = mesh.smoke.expect("smoke payload");
         assert!(smoke.frame_count >= 2);
         assert!(smoke.frames[0].particle_count > 0);
+    }
+
+    #[test]
+    fn liquid_viewport_from_ocean_preset() {
+        let graph = Graph::ocean_patch_preset();
+        let mesh = cook_viewport_mesh(&graph).expect("liquid viewport");
+        let liquid = mesh.liquid.expect("liquid payload");
+        assert!(liquid.frame_count >= 2);
+        assert!(liquid.frames[0].particle_count > 0);
     }
 
     #[test]

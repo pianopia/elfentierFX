@@ -15,9 +15,8 @@ interface Viewport3DProps {
 }
 
 interface ViewportStats {
-  fps: number;
   particles: number;
-  smokeFrame: number;
+  fluidFrame: number;
   backend: string;
 }
 
@@ -69,6 +68,46 @@ function orbitCamera(
   };
 }
 
+function fluidFrameCount(mesh: ViewportMesh): number {
+  if (mesh.liquid && mesh.liquid.frame_count > 0) {
+    return mesh.liquid.frame_count;
+  }
+  if (mesh.smoke && mesh.smoke.frame_count > 0) {
+    return mesh.smoke.frame_count;
+  }
+  return 0;
+}
+
+function fluidFps(mesh: ViewportMesh): number {
+  if (mesh.liquid) return mesh.liquid.fps || 12;
+  if (mesh.smoke) return mesh.smoke.fps || 12;
+  return 12;
+}
+
+function particleCountAt(mesh: ViewportMesh, frameIndex: number): number {
+  if (mesh.liquid) {
+    return (
+      mesh.liquid.frames[frameIndex]?.particle_count ??
+      mesh.liquid.frames[0]?.particle_count ??
+      0
+    );
+  }
+  if (mesh.smoke) {
+    return (
+      mesh.smoke.frames[frameIndex]?.particle_count ??
+      mesh.smoke.frames[0]?.particle_count ??
+      0
+    );
+  }
+  return 0;
+}
+
+function fluidLabel(mesh: ViewportMesh | null): string {
+  if (mesh?.liquid) return "liquid";
+  if (mesh?.smoke) return "smoke";
+  return "";
+}
+
 export default function Viewport3D({
   mesh,
   nativePreview,
@@ -79,13 +118,12 @@ export default function Viewport3D({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const meshRef = useRef<ViewportMesh | null>(null);
   const cameraRef = useRef<NativeViewportCamera | null>(null);
-  const smokeFrameRef = useRef(0);
+  const fluidFrameRef = useRef(0);
   const renderPendingRef = useRef(false);
   const dragRef = useRef<{ x: number; y: number } | null>(null);
   const [stats, setStats] = useState<ViewportStats>({
-    fps: 0,
     particles: 0,
-    smokeFrame: 0,
+    fluidFrame: 0,
     backend: "wgpu",
   });
   const [viewportError, setViewportError] = useState<string | null>(initialError);
@@ -120,11 +158,8 @@ export default function Viewport3D({
         setStats((prev) => ({
           ...prev,
           backend: preview.backend,
-          smokeFrame: frameIndex,
-          particles:
-            currentMesh.smoke?.frames[frameIndex]?.particle_count ??
-            currentMesh.smoke?.frames[0]?.particle_count ??
-            0,
+          fluidFrame: frameIndex,
+          particles: particleCountAt(currentMesh, frameIndex),
         }));
       } catch (error) {
         reportRenderError(error);
@@ -141,7 +176,7 @@ export default function Viewport3D({
 
   useEffect(() => {
     meshRef.current = mesh;
-    smokeFrameRef.current = 0;
+    fluidFrameRef.current = 0;
     if (nativeCamera) {
       cameraRef.current = nativeCamera;
     }
@@ -152,7 +187,7 @@ export default function Viewport3D({
       setStats((prev) => ({
         ...prev,
         backend: nativePreview.backend,
-        particles: mesh.smoke?.frames[0]?.particle_count ?? 0,
+        particles: particleCountAt(mesh, 0),
       }));
     } else if (cameraRef.current) {
       void renderFrame(0, cameraRef.current);
@@ -160,13 +195,15 @@ export default function Viewport3D({
   }, [mesh, nativePreview, nativeCamera, canRender, renderFrame]);
 
   useEffect(() => {
-    if (!canRender || !mesh?.smoke || mesh.smoke.frame_count <= 1) return undefined;
-    const fps = mesh.smoke.fps || 12;
+    if (!canRender || !mesh) return undefined;
+    const frameCount = fluidFrameCount(mesh);
+    if (frameCount <= 1) return undefined;
+    const fps = fluidFps(mesh);
     const interval = window.setInterval(() => {
-      smokeFrameRef.current = (smokeFrameRef.current + 1) % mesh.smoke!.frame_count;
+      fluidFrameRef.current = (fluidFrameRef.current + 1) % frameCount;
       const camera = cameraRef.current;
       if (camera) {
-        void renderFrame(smokeFrameRef.current, camera);
+        void renderFrame(fluidFrameRef.current, camera);
       }
     }, 1000 / fps);
     return () => window.clearInterval(interval);
@@ -188,7 +225,7 @@ export default function Viewport3D({
       const dy = event.clientY - dragRef.current.y;
       dragRef.current = { x: event.clientX, y: event.clientY };
       cameraRef.current = orbitCamera(cameraRef.current, dx * 0.008, dy * 0.008);
-      void renderFrame(smokeFrameRef.current, cameraRef.current);
+      void renderFrame(fluidFrameRef.current, cameraRef.current);
     };
 
     const onPointerUp = (event: PointerEvent) => {
@@ -208,6 +245,8 @@ export default function Viewport3D({
     };
   }, [canRender, renderFrame]);
 
+  const label = fluidLabel(mesh);
+
   return (
     <div className="viewport3d">
       <div className="viewport3d-chrome">
@@ -220,8 +259,8 @@ export default function Viewport3D({
               native {stats.backend} · drag to orbit
             </span>
             <span className="viewport3d-stat">
-              {stats.particles > 0 && `${stats.particles} smoke · `}
-              {stats.smokeFrame > 0 && `f${stats.smokeFrame} · `}
+              {stats.particles > 0 && label && `${stats.particles} ${label} · `}
+              {stats.fluidFrame > 0 && `f${stats.fluidFrame} · `}
               wgpu preview
             </span>
           </>
