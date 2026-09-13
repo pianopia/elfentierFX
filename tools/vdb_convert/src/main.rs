@@ -210,7 +210,7 @@ fn print_usage() {
            {evol_format} (.{evol_ext}) — elfentier 3D texture interchange\n\
          \n\
          OpenVDB files use uncompressed active-mask encoding and are readable by\n\
-         vdb-rs, Houdini, Blender (OpenVDB), and other standard tools.\n\
+         vdb-rs and other standard OpenVDB-compatible tools.\n\
          Unity users can also install Unity Volume Importer for legacy .evol bundles.\n\
          \n\
          OpenVDB is a trademark of LF Projects, LLC.",
