@@ -7,6 +7,8 @@ import type {
   CookResult,
   ExportResult,
   Graph,
+  NativePreviewImage,
+  NativeViewportCamera,
   SmokeExportResult,
   ViewportMesh,
 } from "./types/graph";
@@ -28,6 +30,9 @@ function App() {
   const [graph, setGraph] = useState<Graph | null>(null);
   const [cookResult, setCookResult] = useState<CookResult | null>(null);
   const [viewportMesh, setViewportMesh] = useState<ViewportMesh | null>(null);
+  const [nativePreview, setNativePreview] = useState<NativePreviewImage | null>(null);
+  const [nativeCamera, setNativeCamera] = useState<NativeViewportCamera | null>(null);
+  const [useNativeViewport, setUseNativeViewport] = useState(false);
   const [exportResult, setExportResult] = useState<ExportResult | null>(null);
   const [smokeExportResult, setSmokeExportResult] = useState<SmokeExportResult | null>(null);
   const [promptSummary, setPromptSummary] = useState("");
@@ -94,6 +99,9 @@ function App() {
         graphRef.current = nextPreset;
         setCookResult(null);
         setViewportMesh(null);
+        setNativePreview(null);
+        setNativeCamera(null);
+        setUseNativeViewport(false);
         setExportResult(null);
         setSmokeExportResult(null);
         setPromptSummary("");
@@ -130,6 +138,9 @@ function App() {
       const result = await agentApi.cook(current);
       setCookResult(result.stats);
       setViewportMesh(result.mesh);
+      setNativePreview(result.native_preview ?? null);
+      setNativeCamera(result.native_camera ?? null);
+      setUseNativeViewport(result.stats.native_viewport ?? false);
       setStatus(formatCookStatus(result.stats));
     } catch (error) {
       setStatus(`Cook failed: ${String(error)}`);
@@ -191,6 +202,9 @@ function App() {
         setPromptSummary(result.summary);
         setCookResult(null);
         setViewportMesh(null);
+        setNativePreview(null);
+        setNativeCamera(null);
+        setUseNativeViewport(false);
         setExportResult(null);
         setSmokeExportResult(null);
         setStatus(result.summary || "Prompt applied");
@@ -233,7 +247,14 @@ function App() {
               onGraphChange={handleGraphChange}
             />
           }
-          right={<Viewport3D mesh={viewportMesh} />}
+          right={
+            <Viewport3D
+              mesh={viewportMesh}
+              nativePreview={nativePreview}
+              nativeCamera={nativeCamera}
+              useNativeViewport={useNativeViewport}
+            />
+          }
         />
       </main>
 

@@ -1,432 +1,213 @@
-import { useEffect, useRef, useState } from "react";
-import * as THREE from "three";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import type { ViewportMesh, ViewportSmoke } from "../types/graph";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { agentApi } from "../agent/api";
+import type {
+  NativePreviewImage,
+  NativeViewportCamera,
+  ViewportMesh,
+} from "../types/graph";
+import ThreeViewportFallback from "./ThreeViewportFallback";
 import "./Viewport3D.css";
-
-type RendererKind = "webgpu" | "webgl";
 
 interface Viewport3DProps {
   mesh: ViewportMesh | null;
+  nativePreview?: NativePreviewImage | null;
+  nativeCamera?: NativeViewportCamera | null;
+  useNativeViewport?: boolean;
 }
 
 interface ViewportStats {
   fps: number;
-  triangles: number;
-  instances: number;
   particles: number;
   smokeFrame: number;
-  drawCalls: number;
-  renderer: RendererKind;
+  backend: string;
 }
 
-function fitCameraToSmoke(
-  camera: THREE.PerspectiveCamera,
-  controls: OrbitControls,
-  smoke: ViewportSmoke,
-) {
-  const box = new THREE.Box3(
-    new THREE.Vector3(...smoke.bounds_min),
-    new THREE.Vector3(...smoke.bounds_max),
-  );
-  if (box.isEmpty()) return;
-  const center = box.getCenter(new THREE.Vector3());
-  const size = box.getSize(new THREE.Vector3());
-  const maxDim = Math.max(size.x, size.y, size.z, 6);
-  const dist = maxDim * 1.8;
-  camera.position.set(center.x + dist * 0.65, center.y + dist * 0.5, center.z + dist * 0.75);
-  controls.target.copy(center);
-  controls.update();
+function drawPreview(canvas: HTMLCanvasElement, preview: NativePreviewImage) {
+  canvas.width = preview.width;
+  canvas.height = preview.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  const imageData = new ImageData(preview.width, preview.height);
+  imageData.data.set(preview.rgba);
+  ctx.putImageData(imageData, 0, 0);
 }
 
-function fitCameraToContent(
-  camera: THREE.PerspectiveCamera,
-  controls: OrbitControls,
-  mesh: ViewportMesh,
-) {
-  if (mesh.smoke && mesh.vertex_count === 0) {
-    fitCameraToSmoke(camera, controls, mesh.smoke);
-    return;
-  }
-
-  const box = new THREE.Box3();
-  const matrix = new THREE.Matrix4();
-  const vec = new THREE.Vector3();
-  const positions = mesh.positions;
-
-  for (let i = 0; i < mesh.instance_count; i++) {
-    matrix.fromArray(mesh.instance_matrices.slice(i * 16, i * 16 + 16));
-    for (let v = 0; v < positions.length; v += 3) {
-      vec.set(positions[v], positions[v + 1], positions[v + 2]).applyMatrix4(matrix);
-      box.expandByPoint(vec);
-    }
-  }
-
-  if (mesh.smoke) {
-    box.expandByPoint(new THREE.Vector3(...mesh.smoke.bounds_min));
-    box.expandByPoint(new THREE.Vector3(...mesh.smoke.bounds_max));
-  }
-
-  if (box.isEmpty()) return;
-
-  const center = box.getCenter(new THREE.Vector3());
-  const size = box.getSize(new THREE.Vector3());
-  const maxDim = Math.max(size.x, size.y, size.z, 8);
-  const dist = maxDim * 1.6;
-  camera.position.set(center.x + dist * 0.7, center.y + dist * 0.55, center.z + dist * 0.85);
-  controls.target.copy(center);
-  controls.update();
+function orbitCamera(
+  camera: NativeViewportCamera,
+  deltaAzimuth: number,
+  deltaElevation: number,
+): NativeViewportCamera {
+  const dx = camera.eye[0] - camera.target[0];
+  const dy = camera.eye[1] - camera.target[1];
+  const dz = camera.eye[2] - camera.target[2];
+  const radius = Math.max(Math.hypot(dx, dy, dz), 0.001);
+  let azimuth = Math.atan2(dz, dx);
+  let elevation = Math.asin(Math.max(-1, Math.min(1, dy / radius)));
+  azimuth += deltaAzimuth;
+  elevation = Math.max(-1.2, Math.min(1.2, elevation + deltaElevation));
+  const cosEl = Math.cos(elevation);
+  return {
+    ...camera,
+    eye: [
+      camera.target[0] + radius * cosEl * Math.cos(azimuth),
+      camera.target[1] + radius * Math.sin(elevation),
+      camera.target[2] + radius * cosEl * Math.sin(azimuth),
+    ],
+  };
 }
 
-function applySmokeFrame(
-  smokeMesh: THREE.InstancedMesh,
-  smoke: ViewportSmoke,
-  frameIndex: number,
-) {
-  const frame = smoke.frames[frameIndex];
-  if (!frame) return 0;
-
-  const dummy = new THREE.Object3D();
-  const count = frame.particle_count;
-  for (let i = 0; i < count; i++) {
-    const px = frame.positions[i * 3];
-    const py = frame.positions[i * 3 + 1];
-    const pz = frame.positions[i * 3 + 2];
-    const size = frame.sizes[i] ?? 0.2;
-    const opacity = frame.opacities[i] ?? 0.5;
-    dummy.position.set(px, py, pz);
-    dummy.scale.setScalar(size);
-    dummy.updateMatrix();
-    smokeMesh.setMatrixAt(i, dummy.matrix);
-    smokeMesh.setColorAt(i, new THREE.Color(0.85, 0.88, 0.92).multiplyScalar(0.55 + opacity * 0.55));
-  }
-  smokeMesh.count = count;
-  smokeMesh.instanceMatrix.needsUpdate = true;
-  if (smokeMesh.instanceColor) smokeMesh.instanceColor.needsUpdate = true;
-  return count;
-}
-
-function applyMeshToScene(
-  scene: THREE.Scene,
-  mesh: ViewportMesh,
-  instancedRef: React.MutableRefObject<THREE.InstancedMesh | null>,
-  smokeRef: React.MutableRefObject<THREE.InstancedMesh | null>,
-  camera: THREE.PerspectiveCamera,
-  controls: OrbitControls,
-) {
-  if (instancedRef.current) {
-    scene.remove(instancedRef.current);
-    instancedRef.current.geometry.dispose();
-    (instancedRef.current.material as THREE.Material).dispose();
-    instancedRef.current = null;
-  }
-  if (smokeRef.current) {
-    scene.remove(smokeRef.current);
-    smokeRef.current.geometry.dispose();
-    (smokeRef.current.material as THREE.Material).dispose();
-    smokeRef.current = null;
-  }
-
-  if (mesh.vertex_count > 0 && mesh.positions.length > 0) {
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute("position", new THREE.Float32BufferAttribute(mesh.positions, 3));
-    geometry.setIndex(mesh.indices);
-    geometry.computeVertexNormals();
-
-    const material = new THREE.MeshStandardMaterial({
-      color: 0x8fa4c4,
-      roughness: 0.62,
-      metalness: 0.12,
-    });
-
-    const count = mesh.instance_count;
-    const instanced = new THREE.InstancedMesh(geometry, material, count);
-    const matrix = new THREE.Matrix4();
-    for (let i = 0; i < count; i++) {
-      matrix.fromArray(mesh.instance_matrices.slice(i * 16, i * 16 + 16));
-      instanced.setMatrixAt(i, matrix);
-    }
-    instanced.instanceMatrix.needsUpdate = true;
-    scene.add(instanced);
-    instancedRef.current = instanced;
-  }
-
-  if (mesh.smoke && mesh.smoke.frames.length > 0) {
-    const maxParticles = Math.max(
-      ...mesh.smoke.frames.map((f) => f.particle_count),
-      64,
-    );
-    const particleGeo = new THREE.SphereGeometry(0.5, 6, 6);
-    const particleMat = new THREE.MeshStandardMaterial({
-      color: 0xd8e2ef,
-      transparent: true,
-      opacity: 0.35,
-      depthWrite: false,
-      roughness: 1.0,
-      metalness: 0.0,
-    });
-    const smokeInstanced = new THREE.InstancedMesh(particleGeo, particleMat, maxParticles);
-    applySmokeFrame(smokeInstanced, mesh.smoke, 0);
-    scene.add(smokeInstanced);
-    smokeRef.current = smokeInstanced;
-  }
-
-  fitCameraToContent(camera, controls, mesh);
-}
-
-export default function Viewport3D({ mesh }: Viewport3DProps) {
+export default function Viewport3D({
+  mesh,
+  nativePreview,
+  nativeCamera,
+  useNativeViewport = false,
+}: Viewport3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const sceneRef = useRef<THREE.Scene | null>(null);
-  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
-  const controlsRef = useRef<OrbitControls | null>(null);
-  const instancedRef = useRef<THREE.InstancedMesh | null>(null);
-  const smokeRef = useRef<THREE.InstancedMesh | null>(null);
-  const readyRef = useRef(false);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const meshRef = useRef<ViewportMesh | null>(null);
+  const cameraRef = useRef<NativeViewportCamera | null>(null);
   const smokeFrameRef = useRef(0);
-  const smokeClockRef = useRef(0);
+  const renderPendingRef = useRef(false);
+  const dragRef = useRef<{ x: number; y: number } | null>(null);
   const [stats, setStats] = useState<ViewportStats>({
     fps: 0,
-    triangles: 0,
-    instances: 0,
     particles: 0,
     smokeFrame: 0,
-    drawCalls: 0,
-    renderer: "webgl",
+    backend: "wgpu",
   });
+  const [renderError, setRenderError] = useState(false);
 
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
+  const nativeActive = useNativeViewport && !renderError && !!mesh;
 
-    let disposed = false;
-    let animationId = 0;
-    let glRenderer: THREE.WebGLRenderer | null = null;
-    let gpuRenderer: THREE.WebGLRenderer | null = null;
-    let rendererKind: RendererKind = "webgl";
-
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0c0e12);
-    scene.fog = new THREE.FogExp2(0x0c0e12, 0.018);
-    sceneRef.current = scene;
-
-    const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 500);
-    camera.position.set(28, 22, 36);
-    cameraRef.current = camera;
-
-    scene.add(new THREE.AmbientLight(0x4a5568, 0.55));
-    const key = new THREE.DirectionalLight(0xd8e6ff, 1.1);
-    key.position.set(30, 50, 20);
-    scene.add(key);
-    const fill = new THREE.DirectionalLight(0x6ea8ff, 0.35);
-    fill.position.set(-20, 15, -10);
-    scene.add(fill);
-
-    const grid = new THREE.GridHelper(120, 60, 0x2a3344, 0x1a1f28);
-    grid.position.y = -0.01;
-    scene.add(grid);
-
-    const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(120, 120),
-      new THREE.MeshStandardMaterial({
-        color: 0x10141a,
-        roughness: 0.95,
-        metalness: 0.05,
-      }),
-    );
-    ground.rotation.x = -Math.PI / 2;
-    ground.position.y = -0.02;
-    scene.add(ground);
-
-    const controls = new OrbitControls(camera, container);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.06;
-    controls.target.set(24, 4, 0);
-    controlsRef.current = controls;
-
-    const resize = () => {
-      const w = container.clientWidth;
-      const h = container.clientHeight;
-      if (w === 0 || h === 0) return;
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
-      const active = gpuRenderer ?? glRenderer;
-      active?.setSize(w, h);
-    };
-
-    const mountCanvas = (canvas: HTMLCanvasElement) => {
-      canvas.style.display = "block";
-      canvas.style.width = "100%";
-      canvas.style.height = "100%";
-      container.appendChild(canvas);
-      controls.dispose();
-      const nextControls = new OrbitControls(camera, canvas);
-      nextControls.enableDamping = true;
-      nextControls.dampingFactor = 0.06;
-      nextControls.target.copy(controls.target);
-      controlsRef.current = nextControls;
-    };
-
-    const setup = async () => {
+  const renderFrame = useCallback(
+    async (frameIndex: number, camera: NativeViewportCamera) => {
+      const currentMesh = meshRef.current;
+      const container = containerRef.current;
+      if (!currentMesh || !container || renderPendingRef.current) return;
+      renderPendingRef.current = true;
       try {
-        const { WebGPURenderer } = await import("three/webgpu");
-        const gpu = new WebGPURenderer({ antialias: true });
-        await gpu.init();
-        gpu.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-        mountCanvas(gpu.domElement);
-        gpuRenderer = gpu as unknown as THREE.WebGLRenderer;
-        rendererKind = "webgpu";
-      } catch {
-        glRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-        glRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-        glRenderer.outputColorSpace = THREE.SRGBColorSpace;
-        mountCanvas(glRenderer.domElement);
-      }
-
-      setStats((prev) => ({ ...prev, renderer: rendererKind }));
-      resize();
-      readyRef.current = true;
-      if (meshRef.current && controlsRef.current) {
-        applyMeshToScene(
-          scene,
-          meshRef.current,
-          instancedRef,
-          smokeRef,
+        const width = Math.max(320, Math.min(container.clientWidth, 1280));
+        const height = Math.max(240, Math.min(container.clientHeight, 960));
+        const preview = await agentApi.renderNativeViewport(
+          currentMesh,
+          frameIndex,
+          width,
+          height,
           camera,
-          controlsRef.current,
         );
-        const m = meshRef.current;
+        if (canvasRef.current) {
+          drawPreview(canvasRef.current, preview);
+        }
         setStats((prev) => ({
           ...prev,
-          triangles: m.triangle_count * m.instance_count,
-          instances: m.instance_count,
-          particles: m.smoke?.frames[0]?.particle_count ?? 0,
-          drawCalls: (instancedRef.current ? 1 : 0) + (smokeRef.current ? 1 : 0),
+          backend: preview.backend,
+          smokeFrame: frameIndex,
+          particles:
+            currentMesh.smoke?.frames[frameIndex]?.particle_count ??
+            currentMesh.smoke?.frames[0]?.particle_count ??
+            0,
         }));
+      } catch {
+        setRenderError(true);
+      } finally {
+        renderPendingRef.current = false;
       }
-
-      let frames = 0;
-      let lastFps = performance.now();
-
-      const tick = (now: number) => {
-        if (disposed) return;
-        animationId = requestAnimationFrame(tick);
-        controlsRef.current?.update();
-
-        const currentMesh = meshRef.current;
-        const smokeData = currentMesh?.smoke;
-        if (smokeData && smokeRef.current && smokeData.frame_count > 1) {
-          smokeClockRef.current += 1 / 60;
-          const frameDuration = 1 / smokeData.fps;
-          if (smokeClockRef.current >= frameDuration) {
-            smokeClockRef.current = 0;
-            smokeFrameRef.current = (smokeFrameRef.current + 1) % smokeData.frame_count;
-            const particles = applySmokeFrame(
-              smokeRef.current,
-              smokeData,
-              smokeFrameRef.current,
-            );
-            setStats((prev) => ({
-              ...prev,
-              particles,
-              smokeFrame: smokeFrameRef.current,
-            }));
-          }
-        }
-
-        (gpuRenderer ?? glRenderer)?.render(scene, camera);
-
-        frames += 1;
-        if (now - lastFps >= 500) {
-          const fps = Math.round((frames * 1000) / (now - lastFps));
-          frames = 0;
-          lastFps = now;
-          setStats((prev) => ({
-            ...prev,
-            fps,
-            drawCalls:
-              (instancedRef.current ? 1 : 0) + (smokeRef.current ? 1 : 0),
-          }));
-        }
-      };
-      requestAnimationFrame(tick);
-    };
-
-    setup();
-
-    const observer = new ResizeObserver(resize);
-    observer.observe(container);
-
-    return () => {
-      disposed = true;
-      cancelAnimationFrame(animationId);
-      observer.disconnect();
-      controlsRef.current?.dispose();
-      if (instancedRef.current) {
-        scene.remove(instancedRef.current);
-        instancedRef.current.geometry.dispose();
-        (instancedRef.current.material as THREE.Material).dispose();
-        instancedRef.current = null;
-      }
-      if (smokeRef.current) {
-        scene.remove(smokeRef.current);
-        smokeRef.current.geometry.dispose();
-        (smokeRef.current.material as THREE.Material).dispose();
-        smokeRef.current = null;
-      }
-      grid.geometry.dispose();
-      (grid.material as THREE.Material).dispose();
-      ground.geometry.dispose();
-      (ground.material as THREE.Material).dispose();
-      gpuRenderer?.dispose();
-      glRenderer?.dispose();
-      sceneRef.current = null;
-      readyRef.current = false;
-      while (container.firstChild) {
-        container.removeChild(container.firstChild);
-      }
-    };
-  }, []);
+    },
+    [],
+  );
 
   useEffect(() => {
     meshRef.current = mesh;
     smokeFrameRef.current = 0;
-    smokeClockRef.current = 0;
-    const scene = sceneRef.current;
-    const camera = cameraRef.current;
-    const controls = controlsRef.current;
-    if (!mesh || !scene || !camera || !controls || !readyRef.current) return;
+    if (nativeCamera) {
+      cameraRef.current = nativeCamera;
+    }
+    if (!nativeActive || !mesh) return;
 
-    applyMeshToScene(scene, mesh, instancedRef, smokeRef, camera, controls);
-    setStats((prev) => ({
-      ...prev,
-      triangles: mesh.triangle_count * mesh.instance_count,
-      instances: mesh.instance_count,
-      particles: mesh.smoke?.frames[0]?.particle_count ?? 0,
-      smokeFrame: 0,
-      drawCalls:
-        (instancedRef.current ? 1 : 0) + (smokeRef.current ? 1 : 0),
-    }));
-  }, [mesh]);
+    if (nativePreview && canvasRef.current) {
+      drawPreview(canvasRef.current, nativePreview);
+      setStats((prev) => ({
+        ...prev,
+        backend: nativePreview.backend,
+        particles: mesh.smoke?.frames[0]?.particle_count ?? 0,
+      }));
+    } else if (cameraRef.current) {
+      void renderFrame(0, cameraRef.current);
+    }
+  }, [mesh, nativePreview, nativeCamera, nativeActive, renderFrame]);
+
+  useEffect(() => {
+    if (!nativeActive || !mesh?.smoke || mesh.smoke.frame_count <= 1) return undefined;
+    const fps = mesh.smoke.fps || 12;
+    const interval = window.setInterval(() => {
+      smokeFrameRef.current = (smokeFrameRef.current + 1) % mesh.smoke!.frame_count;
+      const camera = cameraRef.current;
+      if (camera) {
+        void renderFrame(smokeFrameRef.current, camera);
+      }
+    }, 1000 / fps);
+    return () => window.clearInterval(interval);
+  }, [mesh, nativeActive, renderFrame]);
+
+  useEffect(() => {
+    if (!nativeActive) return undefined;
+    const canvas = canvasRef.current;
+    if (!canvas) return undefined;
+
+    const onPointerDown = (event: PointerEvent) => {
+      dragRef.current = { x: event.clientX, y: event.clientY };
+      canvas.setPointerCapture(event.pointerId);
+    };
+
+    const onPointerMove = (event: PointerEvent) => {
+      if (!dragRef.current || !cameraRef.current) return;
+      const dx = event.clientX - dragRef.current.x;
+      const dy = event.clientY - dragRef.current.y;
+      dragRef.current = { x: event.clientX, y: event.clientY };
+      cameraRef.current = orbitCamera(cameraRef.current, dx * 0.008, dy * 0.008);
+      void renderFrame(smokeFrameRef.current, cameraRef.current);
+    };
+
+    const onPointerUp = (event: PointerEvent) => {
+      dragRef.current = null;
+      canvas.releasePointerCapture(event.pointerId);
+    };
+
+    canvas.addEventListener("pointerdown", onPointerDown);
+    canvas.addEventListener("pointermove", onPointerMove);
+    canvas.addEventListener("pointerup", onPointerUp);
+    canvas.addEventListener("pointerleave", onPointerUp);
+    return () => {
+      canvas.removeEventListener("pointerdown", onPointerDown);
+      canvas.removeEventListener("pointermove", onPointerMove);
+      canvas.removeEventListener("pointerup", onPointerUp);
+      canvas.removeEventListener("pointerleave", onPointerUp);
+    };
+  }, [nativeActive, renderFrame]);
+
+  if (!nativeActive) {
+    return <ThreeViewportFallback mesh={mesh} />;
+  }
 
   return (
     <div className="viewport3d">
       <div className="viewport3d-chrome">
         <span className="viewport3d-title">3D View</span>
         <span className="viewport3d-stat">
-          {stats.renderer === "webgpu" ? "WebGPU" : "WebGL"} · {stats.fps} fps
+          native {stats.backend} · drag to orbit
         </span>
         <span className="viewport3d-stat">
-          {stats.instances > 0 && `${stats.instances} inst · `}
           {stats.particles > 0 && `${stats.particles} smoke · `}
           {stats.smokeFrame > 0 && `f${stats.smokeFrame} · `}
-          {(stats.triangles / 1000).toFixed(1)}k tris · {stats.drawCalls} draw
+          wgpu preview
         </span>
       </div>
-      <div className="viewport3d-canvas" ref={containerRef} />
-      {!mesh && (
-        <div className="viewport3d-empty">Cook to preview city geometry or smoke</div>
-      )}
+      <div className="viewport3d-canvas viewport3d-native" ref={containerRef}>
+        <canvas ref={canvasRef} className="viewport3d-native-canvas" />
+        {!mesh && (
+          <div className="viewport3d-empty">Cook to preview via native wgpu</div>
+        )}
+      </div>
     </div>
   );
 }
