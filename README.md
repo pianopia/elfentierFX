@@ -1,4 +1,4 @@
-# ElfentierDCC
+# elfentierX
 
 Procedural DCC aimed at **Unity / game-ready advanced looks** — node-based modeling, volumes (OpenVDB), fluids, and bake/export — with a much lower learning curve than traditional FX tools.
 
@@ -17,7 +17,7 @@ Design / scaffolding. Building → city procedural flow is the planned **Alpha 1
 
 ## Related
 
-Existing personal repo `pianopia/Elfentier` already occupied the bare name (GitHub treats `elfentier` / `Elfentier` as the same). This repo uses **ElfentierDCC** to disambiguate.
+`pianopia/Elfentier` already occupied the bare name. This repo is **elfentierX**.
 
 ## License
 
