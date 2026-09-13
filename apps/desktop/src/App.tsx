@@ -32,7 +32,7 @@ function App() {
   const [viewportMesh, setViewportMesh] = useState<ViewportMesh | null>(null);
   const [nativePreview, setNativePreview] = useState<NativePreviewImage | null>(null);
   const [nativeCamera, setNativeCamera] = useState<NativeViewportCamera | null>(null);
-  const [useNativeViewport, setUseNativeViewport] = useState(false);
+  const [viewportError, setViewportError] = useState<string | null>(null);
   const [exportResult, setExportResult] = useState<ExportResult | null>(null);
   const [smokeExportResult, setSmokeExportResult] = useState<SmokeExportResult | null>(null);
   const [promptSummary, setPromptSummary] = useState("");
@@ -101,7 +101,7 @@ function App() {
         setViewportMesh(null);
         setNativePreview(null);
         setNativeCamera(null);
-        setUseNativeViewport(false);
+        setViewportError(null);
         setExportResult(null);
         setSmokeExportResult(null);
         setPromptSummary("");
@@ -140,7 +140,10 @@ function App() {
       setViewportMesh(result.mesh);
       setNativePreview(result.native_preview ?? null);
       setNativeCamera(result.native_camera ?? null);
-      setUseNativeViewport(result.stats.native_viewport ?? false);
+      setViewportError(result.native_preview_error ?? null);
+      if (result.native_preview_error) {
+        console.error("Native wgpu viewport preview failed:", result.native_preview_error);
+      }
       setStatus(formatCookStatus(result.stats));
     } catch (error) {
       setStatus(`Cook failed: ${String(error)}`);
@@ -204,7 +207,7 @@ function App() {
         setViewportMesh(null);
         setNativePreview(null);
         setNativeCamera(null);
-        setUseNativeViewport(false);
+        setViewportError(null);
         setExportResult(null);
         setSmokeExportResult(null);
         setStatus(result.summary || "Prompt applied");
@@ -252,7 +255,7 @@ function App() {
               mesh={viewportMesh}
               nativePreview={nativePreview}
               nativeCamera={nativeCamera}
-              useNativeViewport={useNativeViewport}
+              initialError={viewportError}
             />
           }
         />

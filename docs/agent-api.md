@@ -14,7 +14,7 @@ JSON-serializable Tauri commands for external agents and the desktop UI. All com
 | `get_smoke_puff_preset` | — | `Graph` | Smoke/gas puff starter graph |
 | `set_params_command` | `{ request: { graph, node_id?, params } }` | `Graph` | Update `BuildingParams` on a node |
 | `set_smoke_params_command` | `{ request: SetSmokeParamsRequest }` | `Graph` | Update smoke domain/source/solver nodes |
-| `cook` | `{ graph }` | `CookWithMeshResult` | Cook graph + viewport buffers + native wgpu preview |
+| `cook` | `{ graph }` | `CookWithMeshResult` | Cook graph + viewport buffers + native wgpu preview (wgpu-only; failures surface as `native_preview_error`) |
 | `render_native_viewport_command` | `{ request: RenderNativeRequest }` | `NativePreviewImage` | Re-render mesh/smoke frame with camera (orbit/animation) |
 | `cook_city_graph` | `{ graph }` | `CookResult` | Stats only (legacy) |
 | `export_gltf` | `{ graph, path }` | `ExportResult` | Export merged city `.glb` |
@@ -139,6 +139,7 @@ Returns instanced geometry for city graphs, or animated smoke impostor particles
 
 - City graphs: `positions` / `indices` / `instance_matrices` as before.
 - Smoke graphs: `smoke.frames[]` holds soft particle impostors; viewport autoplays at `smoke.fps`.
+- Realtime preview is **wgpu-only**. On init/render failure, `native_preview` is null and `native_preview_error` carries the error string for the UI (no WebGL/Three.js fallback).
 
 Export (`export_gltf`) writes a **merged** mesh for city graphs only.
 
