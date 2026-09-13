@@ -58,6 +58,30 @@ pub fn explain_graph(graph: &Graph) -> String {
         _ => lines.push("Placement — direct mesh (no instancing node)".into()),
     }
 
+    if graph.nodes.iter().any(|n| n.kind == NodeKind::SmokeDomain) {
+        if let Some(node) = graph.nodes.iter().find(|n| n.kind == NodeKind::SmokeDomain) {
+            let domain = node.smoke_domain.unwrap_or_default();
+            lines.push(format!(
+                "Smoke domain — {}³ grid, bounds ({:.0},{:.0},{:.0})→({:.0},{:.0},{:.0}), seed {}",
+                domain.resolution,
+                domain.bounds_min.x,
+                domain.bounds_min.y,
+                domain.bounds_min.z,
+                domain.bounds_max.x,
+                domain.bounds_max.y,
+                domain.bounds_max.z,
+                domain.seed,
+            ));
+        }
+        if let Some(node) = graph.nodes.iter().find(|n| n.kind == NodeKind::SmokeSolver) {
+            let solver = node.smoke_solver.unwrap_or_default();
+            lines.push(format!(
+                "Smoke solver — {} steps, buoyancy {:.1}, dissipation {:.3}",
+                solver.steps, solver.buoyancy, solver.dissipation,
+            ));
+        }
+    }
+
     lines.push(format!(
         "Nodes — {} nodes, {} edges",
         graph.nodes.len(),
@@ -77,5 +101,12 @@ mod tests {
         let text = explain_graph(&Graph::shop_street_preset());
         assert!(text.contains("Shop Street"));
         assert!(text.contains("floors"));
+    }
+
+    #[test]
+    fn explains_smoke_preset() {
+        let text = explain_graph(&Graph::smoke_puff_preset());
+        assert!(text.contains("Smoke Puff"));
+        assert!(text.contains("Smoke domain"));
     }
 }

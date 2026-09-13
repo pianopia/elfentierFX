@@ -20,6 +20,11 @@ export default function ElfNode({ data, selected }: NodeProps) {
   const kindLabel = NODE_KIND_LABELS[nodeData.kind];
   const isParams = nodeData.kind === "building_params" && nodeData.buildingParams;
 
+  const isSourceOnly =
+    nodeData.kind === "building_params" || nodeData.kind === "smoke_domain";
+  const isRoot =
+    nodeData.kind === "city_root" || nodeData.kind === "smoke_root";
+
   return (
     <div className={`elf-node ${selected ? "elf-node--selected" : ""}`} style={{ borderColor: color }}>
       <div className="elf-node-header" style={{ background: `${color}22` }}>
@@ -84,13 +89,17 @@ export default function ElfNode({ data, selected }: NodeProps) {
           {nodeData.kind === "fill_grid" && "Fills lot grid with instances"}
           {nodeData.kind === "merge_instances" && "Combines instance lists"}
           {nodeData.kind === "city_root" && "Final city output"}
+          {nodeData.kind === "smoke_domain" && "Grid bounds + resolution"}
+          {nodeData.kind === "smoke_source" && "Density + temperature emitter"}
+          {nodeData.kind === "smoke_solver" && "Advect · diffuse · project"}
+          {nodeData.kind === "smoke_root" && "Final smoke volume output"}
         </p>
       )}
 
-      {nodeData.kind !== "building_params" && (
+      {!isSourceOnly && (
         <Handle type="target" position={Position.Left} className="elf-handle" />
       )}
-      {nodeData.kind !== "city_root" && (
+      {!isRoot && (
         <Handle type="source" position={Position.Right} className="elf-handle" />
       )}
     </div>

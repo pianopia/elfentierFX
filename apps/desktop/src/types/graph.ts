@@ -4,7 +4,11 @@ export type NodeKind =
   | "place_along_path"
   | "fill_grid"
   | "merge_instances"
-  | "city_root";
+  | "city_root"
+  | "smoke_domain"
+  | "smoke_source"
+  | "smoke_solver"
+  | "smoke_root";
 
 export interface Vec3 {
   x: number;
@@ -37,6 +41,32 @@ export interface GridInput {
   spacing: number;
 }
 
+export interface SmokeDomainInput {
+  resolution: number;
+  bounds_min: Vec3;
+  bounds_max: Vec3;
+  seed: number;
+}
+
+export interface SmokeSourceInput {
+  position: Vec3;
+  radius: number;
+  emission_rate: number;
+  temperature: number;
+  upward_velocity: number;
+}
+
+export interface SmokeSolverInput {
+  steps: number;
+  frame_stride: number;
+  dissipation: number;
+  buoyancy: number;
+  diffusion: number;
+  pressure_iterations: number;
+  ground_collision: boolean;
+  max_particles_per_frame: number;
+}
+
 export interface GraphNode {
   id: string;
   kind: NodeKind;
@@ -44,6 +74,9 @@ export interface GraphNode {
   building_params?: BuildingParams | null;
   path_input?: PathInput | null;
   grid_input?: GridInput | null;
+  smoke_domain?: SmokeDomainInput | null;
+  smoke_source?: SmokeSourceInput | null;
+  smoke_solver?: SmokeSolverInput | null;
 }
 
 export interface GraphEdge {
@@ -57,12 +90,42 @@ export interface Graph {
   edges: GraphEdge[];
 }
 
+export interface SmokeStats {
+  resolution: [number, number, number];
+  max_density: number;
+  step_count: number;
+  frame_count: number;
+  particle_count: number;
+  total_density: number;
+}
+
+export interface ViewportSmokeFrame {
+  positions: number[];
+  sizes: number[];
+  opacities: number[];
+  particle_count: number;
+}
+
+export interface ViewportSmoke {
+  frames: ViewportSmokeFrame[];
+  bounds_min: [number, number, number];
+  bounds_max: [number, number, number];
+  frame_count: number;
+  fps: number;
+  stats: SmokeStats;
+}
+
 export interface CookResult {
   vertex_count: number;
   index_count: number;
   triangle_count: number;
   instance_count: number;
   graph_name: string;
+  smoke_resolution?: [number, number, number] | null;
+  smoke_max_density?: number | null;
+  smoke_steps?: number | null;
+  smoke_frame_count?: number | null;
+  smoke_particle_count?: number | null;
 }
 
 export interface ViewportMesh {
@@ -74,6 +137,7 @@ export interface ViewportMesh {
   triangle_count: number;
   instance_count: number;
   graph_name: string;
+  smoke?: ViewportSmoke | null;
 }
 
 export interface CookWithMeshResult {
@@ -88,6 +152,13 @@ export interface ExportResult {
   byte_len: number;
 }
 
+export interface SmokeExportResult {
+  path: string;
+  frame_count: number;
+  byte_len: number;
+  format: string;
+}
+
 export type PlacementMode = "along_path" | "grid";
 
 export type PromptIntent =
@@ -97,13 +168,21 @@ export type PromptIntent =
   | { type: "adjust_windows"; delta: number }
   | { type: "switch_placement"; mode: PlacementMode }
   | { type: "set_graph_name"; name: string }
+  | { type: "increase_smoke"; emission_delta: number; step_delta: number }
   | { type: "unknown"; raw: string };
 
 export type GraphEdit =
   | { type: "load_preset"; preset_id: string }
   | { type: "set_building_params"; node_id: string; params: BuildingParams }
   | { type: "switch_placement"; mode: PlacementMode }
-  | { type: "set_graph_name"; name: string };
+  | { type: "set_graph_name"; name: string }
+  | {
+      type: "set_smoke_params";
+      source_node_id: string;
+      source: SmokeSourceInput;
+      solver_node_id: string;
+      solver: SmokeSolverInput;
+    };
 
 export interface ApplyPromptResult {
   graph: Graph;
@@ -118,6 +197,13 @@ export interface PresetInfo {
   description: string;
 }
 
+export interface SetSmokeParamsRequest {
+  graph: Graph;
+  domain?: SmokeDomainInput | null;
+  source?: SmokeSourceInput | null;
+  solver?: SmokeSolverInput | null;
+}
+
 export const NODE_KIND_LABELS: Record<NodeKind, string> = {
   building_params: "Building Params",
   building_mesh: "Building Mesh",
@@ -125,6 +211,10 @@ export const NODE_KIND_LABELS: Record<NodeKind, string> = {
   fill_grid: "Fill Grid",
   merge_instances: "Merge Instances",
   city_root: "City Root",
+  smoke_domain: "Smoke Domain",
+  smoke_source: "Smoke Source",
+  smoke_solver: "Smoke Solver",
+  smoke_root: "Smoke Root",
 };
 
 export const NODE_KIND_COLORS: Record<NodeKind, string> = {
@@ -134,4 +224,8 @@ export const NODE_KIND_COLORS: Record<NodeKind, string> = {
   fill_grid: "#c98bff",
   merge_instances: "#ff8fa3",
   city_root: "#e8e8e8",
+  smoke_domain: "#9ad4ff",
+  smoke_source: "#ffd166",
+  smoke_solver: "#b8f2e6",
+  smoke_root: "#f5f5f5",
 };

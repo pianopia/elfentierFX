@@ -11,6 +11,7 @@ pub mod graph;
 pub mod mesh;
 pub mod placement;
 pub mod prompt;
+pub mod smoke;
 pub mod viewport;
 
 use mesh::create_unit_box_mesh;

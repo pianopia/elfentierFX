@@ -1,12 +1,33 @@
-//! Viewport-ready mesh payload with GPU instancing support.
+//! Viewport-ready mesh payload with GPU instancing and smoke particle support.
 
-use crate::graph::{evaluate_city_instanced, Graph};
+use crate::graph::{evaluate_city_instanced, evaluate_smoke_volume, Graph, GraphMode};
 use crate::placement::InstanceTransform;
 use crate::mesh::Mesh;
+use crate::smoke::SmokeVolume;
 use serde::{Deserialize, Serialize};
 
 /// Column-major 4×4 instance matrix (16 floats).
 pub type InstanceMatrix = [f32; 16];
+
+/// One animation frame of soft smoke impostor particles.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ViewportSmokeFrame {
+    pub positions: Vec<f32>,
+    pub sizes: Vec<f32>,
+    pub opacities: Vec<f32>,
+    pub particle_count: u32,
+}
+
+/// Animated smoke preview for the 3D viewport.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ViewportSmoke {
+    pub frames: Vec<ViewportSmokeFrame>,
+    pub bounds_min: [f32; 3],
+    pub bounds_max: [f32; 3],
+    pub frame_count: u32,
+    pub fps: f32,
+    pub stats: crate::smoke::SmokeStats,
+}
 
 /// Efficient mesh buffers for real-time viewport upload.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -22,6 +43,9 @@ pub struct ViewportMesh {
     pub triangle_count: u32,
     pub instance_count: u32,
     pub graph_name: String,
+    /// Present when the graph cooks a smoke volume instead of (or alongside) city geometry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub smoke: Option<ViewportSmoke>,
 }
 
 /// Converts an instance transform to a column-major 4×4 matrix matching mesh transform math.
@@ -56,6 +80,7 @@ pub fn pack_viewport_mesh(
     base: &Mesh,
     instances: &[InstanceTransform],
     graph_name: &str,
+    smoke: Option<ViewportSmoke>,
 ) -> ViewportMesh {
     let positions: Vec<f32> = base
         .positions
@@ -84,13 +109,58 @@ pub fn pack_viewport_mesh(
         triangle_count: base.triangle_count(),
         instance_count: inst_count as u32,
         graph_name: graph_name.to_string(),
+        smoke,
     }
 }
 
-/// Evaluates the graph and returns viewport buffers (base mesh + instancing).
+pub fn pack_viewport_smoke(volume: &SmokeVolume, graph_name: &str) -> ViewportMesh {
+    let frames: Vec<ViewportSmokeFrame> = volume
+        .frames
+        .iter()
+        .map(|f| ViewportSmokeFrame {
+            positions: f.positions.clone(),
+            sizes: f.sizes.clone(),
+            opacities: f.opacities.clone(),
+            particle_count: f.particle_count,
+        })
+        .collect();
+
+    let smoke = ViewportSmoke {
+        frame_count: frames.len() as u32,
+        fps: 12.0,
+        bounds_min: [
+            volume.bounds_min.x,
+            volume.bounds_min.y,
+            volume.bounds_min.z,
+        ],
+        bounds_max: [
+            volume.bounds_max.x,
+            volume.bounds_max.y,
+            volume.bounds_max.z,
+        ],
+        stats: volume.stats,
+        frames,
+    };
+
+    pack_viewport_mesh(&Mesh::unnamed(), &[], graph_name, Some(smoke))
+}
+
+/// Evaluates the graph and returns viewport buffers (city mesh and/or smoke).
 pub fn cook_viewport_mesh(graph: &Graph) -> Result<ViewportMesh, String> {
-    let city = evaluate_city_instanced(graph)?;
-    Ok(pack_viewport_mesh(&city.base_mesh, &city.instances, &graph.name))
+    match graph_mode(graph) {
+        GraphMode::Smoke => {
+            let volume = evaluate_smoke_volume(graph)?;
+            Ok(pack_viewport_smoke(&volume, &graph.name))
+        }
+        GraphMode::City => {
+            let city = evaluate_city_instanced(graph)?;
+            Ok(pack_viewport_mesh(&city.base_mesh, &city.instances, &graph.name, None))
+        }
+    }
+}
+
+fn graph_mode(graph: &Graph) -> GraphMode {
+    crate::graph::graph_mode(graph)
 }
 
 #[cfg(test)]
@@ -106,6 +176,16 @@ mod tests {
         assert!(mesh.instance_count >= 4);
         assert_eq!(mesh.instance_matrices.len(), mesh.instance_count as usize * 16);
         assert_eq!(mesh.positions.len(), mesh.vertex_count as usize * 3);
+        assert!(mesh.smoke.is_none());
+    }
+
+    #[test]
+    fn smoke_viewport_from_preset() {
+        let graph = Graph::smoke_puff_preset();
+        let mesh = cook_viewport_mesh(&graph).expect("smoke viewport");
+        let smoke = mesh.smoke.expect("smoke payload");
+        assert!(smoke.frame_count >= 2);
+        assert!(smoke.frames[0].particle_count > 0);
     }
 
     #[test]
