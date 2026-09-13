@@ -1,5 +1,3 @@
-mod wgpu_viewport;
-
 use elfentier_core::{
     agent::{
         export_cook_bundle_command, export_liquid_cache, export_smoke_density, export_smoke_vdb,
@@ -20,7 +18,7 @@ use elfentier_core::{
     MeshStats,
 };
 use serde::{Deserialize, Serialize};
-use wgpu_viewport::{
+use elfentier_wgpu::{
     default_camera_for_mesh, render_native_viewport, NativePreviewImage, NativeViewportCamera,
 };
 

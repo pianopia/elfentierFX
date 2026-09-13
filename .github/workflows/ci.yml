@@ -22,7 +22,8 @@ jobs:
             libgtk-3-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
-            patchelf
+            patchelf \
+            mesa-vulkan-drivers
 
       - name: Cache cargo
         uses: swatinem/rust-cache@v2
@@ -34,6 +35,11 @@ jobs:
 
       - name: Core tests
         run: cargo test -p elfentier_core
+
+      - name: Wgpu smoke preview tests
+        env:
+          WGPU_BACKEND: vulkan
+        run: cargo test -p elfentier_wgpu
 
       - name: Setup Node
         uses: actions/setup-node@v4

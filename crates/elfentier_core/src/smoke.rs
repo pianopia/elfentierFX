@@ -648,7 +648,7 @@ fn push_frame(
     let max_particles = solver.max_particles_per_frame.max(128) as usize;
     let threshold = (grid.max_density() * 0.025).max(0.006);
     let vs = grid.voxel_size();
-    let base_size = vs.x.max(vs.y).max(vs.z) * 1.65;
+    let base_size = vs.x.max(vs.y).max(vs.z) * 1.28;
 
     let mut candidates: Vec<(usize, f32)> = grid
         .density
@@ -676,8 +676,8 @@ fn push_frame(
         world.z += (rng.next_f32() - 0.5) * vs.z * 0.6;
         positions.extend([world.x, world.y, world.z]);
         let norm = (density / grid.max_density().max(0.01)).clamp(0.08, 1.0);
-        sizes.push(base_size * (0.72 + norm * 0.95));
-        opacities.push((0.32 + norm.powf(0.8) * 0.68).clamp(0.28, 1.0));
+        sizes.push(base_size * (0.62 + norm * 0.78));
+        opacities.push((0.38 + norm.powf(0.72) * 0.62).clamp(0.32, 0.95));
     }
 
     frames.push(SmokeFrame {

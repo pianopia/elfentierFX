@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/elfentier_core",
+    "crates/elfentier_wgpu",
     "apps/desktop/src-tauri",
     "tools/vdb_convert",
 ]

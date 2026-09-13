@@ -843,7 +843,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "elfentierfx-desktop"
+name = "elfentier_wgpu"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
@@ -852,11 +852,20 @@ dependencies = [
  "png 0.17.16",
  "pollster",
  "serde",
+ "wgpu",
+]
+
+[[package]]
+name = "elfentierfx-desktop"
+version = "0.1.0"
+dependencies = [
+ "elfentier_core",
+ "elfentier_wgpu",
+ "serde",
  "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-shell",
- "wgpu",
 ]
 
 [[package]]
