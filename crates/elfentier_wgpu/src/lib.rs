@@ -1,4 +1,4 @@
-//! Native wgpu offscreen viewport (Vulkan/Metal/DX12) for mesh + smoke density previews.
+//! Native wgpu offscreen viewport (Vulkan/Metal/DX12) for mesh + smoke volume raymarch previews.
 
 mod smoke_density;
 
@@ -337,6 +337,9 @@ const PREVIEW_MAX_BILLBOARD_NDC_RADIUS: f32 = 0.16;
 const PREVIEW_MAX_BILLBOARD_SCREEN_PX: f32 = 24.0;
 const PREVIEW_MIN_BILLBOARD_SCREEN_PX: f32 = 8.0;
 const PREVIEW_MAX_BACKGROUND_WASH_PCT: f32 = 82.0;
+const PREVIEW_MAX_SPLAT_DISK_ENERGY: f32 = 18.0;
+const PREVIEW_MAX_SIMILAR_RADIUS_BLOBS: usize = 10;
+const PREVIEW_MIN_FILM_GRID_RESOLUTION: u32 = 48;
 
 pub fn preview_contrast_metrics(rgba: &[u8], clear: [u8; 4]) -> PreviewContrastMetrics {
     let pixel_count = rgba.len() / 4;
@@ -720,10 +723,134 @@ pub fn preview_rejects_sharp_slab_geometry(rgba: &[u8], width: u32, height: u32,
     fill > PREVIEW_MAX_SLAB_BBOX_FILL_RATIO && largest > 8.0
 }
 
-/// Rejects empty/sparse/dot frames and flat slabs; accepts soft rising plumes.
+/// Mean absolute Laplacian on smoke-region luma — high values indicate splat-disk grain.
+pub fn preview_splat_disk_energy(rgba: &[u8], width: u32, height: u32, clear: [u8; 4]) -> f32 {
+    let w = width as usize;
+    let h = height as usize;
+    if w < 3 || h < 3 || rgba.len() != w * h * 4 {
+        return 0.0;
+    }
+    let mut luma = vec![0.0f32; w * h];
+    let mut smoke_mask = vec![false; w * h];
+    for y in 0..h {
+        for x in 0..w {
+            let i = y * w + x;
+            let px = &rgba[i * 4..i * 4 + 4];
+            luma[i] = 0.2126 * px[0] as f32 + 0.7152 * px[1] as f32 + 0.0722 * px[2] as f32;
+            smoke_mask[i] = is_bright_smoke_pixel(px, clear);
+        }
+    }
+    let mut energy = 0.0f32;
+    let mut count = 0usize;
+    for y in 1..h - 1 {
+        for x in 1..w - 1 {
+            let i = y * w + x;
+            if !smoke_mask[i] {
+                continue;
+            }
+            let lap = 4.0 * luma[i] - luma[i - 1] - luma[i + 1] - luma[i - w] - luma[i + w];
+            energy += lap.abs();
+            count += 1;
+        }
+    }
+    if count == 0 {
+        return 0.0;
+    }
+    energy / count as f32
+}
+
+/// Counts bright blobs with near-circular aspect ratio and similar area (splat-disk signature).
+pub fn preview_similar_radius_blob_count(rgba: &[u8], width: u32, height: u32, clear: [u8; 4]) -> usize {
+    let w = width as usize;
+    let h = height as usize;
+    if w == 0 || h == 0 || rgba.len() != w * h * 4 {
+        return 0;
+    }
+    let mut visited = vec![false; w * h];
+    let mut blob_areas = Vec::new();
+    for y in 0..h {
+        for x in 0..w {
+            let idx = y * w + x;
+            if visited[idx] {
+                continue;
+            }
+            let px = &rgba[idx * 4..idx * 4 + 4];
+            if !is_bright_smoke_pixel(px, clear) {
+                continue;
+            }
+            let mut stack = vec![idx];
+            visited[idx] = true;
+            let mut min_x = x;
+            let mut max_x = x;
+            let mut min_y = y;
+            let mut max_y = y;
+            let mut area = 0usize;
+            while let Some(cur) = stack.pop() {
+                area += 1;
+                let cy = cur / w;
+                let cx = cur % w;
+                min_x = min_x.min(cx);
+                max_x = max_x.max(cx);
+                min_y = min_y.min(cy);
+                max_y = max_y.max(cy);
+                for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                    let nx = cx as i32 + dx;
+                    let ny = cy as i32 + dy;
+                    if nx < 0 || ny < 0 || nx >= w as i32 || ny >= h as i32 {
+                        continue;
+                    }
+                    let ni = ny as usize * w + nx as usize;
+                    if visited[ni] {
+                        continue;
+                    }
+                    let npx = &rgba[ni * 4..ni * 4 + 4];
+                    if !is_bright_smoke_pixel(npx, clear) {
+                        continue;
+                    }
+                    visited[ni] = true;
+                    stack.push(ni);
+                }
+            }
+            if area < PREVIEW_MIN_BLOB_PIXELS {
+                continue;
+            }
+            let bw = (max_x - min_x + 1) as f32;
+            let bh = (max_y - min_y + 1) as f32;
+            let aspect = bw.max(bh) / bw.min(bh).max(1.0);
+            if aspect <= 1.35 {
+                blob_areas.push(area);
+            }
+        }
+    }
+    if blob_areas.len() < 3 {
+        return 0;
+    }
+    blob_areas.sort_unstable();
+    let median = blob_areas[blob_areas.len() / 2] as f32;
+    blob_areas
+        .iter()
+        .filter(|a| (**a as f32 - median).abs() / median.max(1.0) < 0.35)
+        .count()
+}
+
+/// Returns true when the frame looks like discrete splat disks rather than continuous volume.
+pub fn preview_rejects_splat_disk_pattern(rgba: &[u8], width: u32, height: u32, clear: [u8; 4]) -> bool {
+    let energy = preview_splat_disk_energy(rgba, width, height, clear);
+    let similar_blobs = preview_similar_radius_blob_count(rgba, width, height, clear);
+    let largest = preview_largest_bright_region_pct(rgba, width, height, clear);
+    // Dot-matrix splats: many equal-radius circles, high local frequency, no dominant plume mass.
+    similar_blobs >= PREVIEW_MAX_SIMILAR_RADIUS_BLOBS
+        && energy > PREVIEW_MAX_SPLAT_DISK_ENERGY * 0.4
+        && largest < 8.0
+}
+
+/// Rejects empty/sparse/dot frames, flat slabs, and splat-disk grain; accepts soft rising plumes.
 pub fn preview_has_soft_smoke_plume(rgba: &[u8], width: u32, height: u32, clear: [u8; 4]) -> bool {
     let metrics = preview_smoke_plume_metrics(rgba, width, height, clear);
     if preview_rejects_sharp_slab_geometry(rgba, width, height, clear) {
+        return false;
+    }
+    if preview_rejects_splat_disk_pattern(rgba, width, height, clear) {
         return false;
     }
     if preview_has_background_wash(rgba, clear) {
@@ -1543,6 +1670,10 @@ async fn render_wgpu(
         label: Some("smoke shader"),
         source: wgpu::ShaderSource::Wgsl(SMOKE_SHADER.into()),
     });
+    let volume_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("volume raymarch shader"),
+        source: wgpu::ShaderSource::Wgsl(smoke_density::VOLUME_RAYMARCH_SHADER.into()),
+    });
     let liquid_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("liquid shader"),
         source: wgpu::ShaderSource::Wgsl(LIQUID_SHADER.into()),
@@ -1897,6 +2028,70 @@ async fn render_wgpu(
         cache: None,
     });
 
+    let volume_bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("volume bind layout"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D3,
+                    multisampled: false,
+                },
+                count: None,
+            },
+        ],
+    });
+
+    let volume_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("volume pipeline layout"),
+        bind_group_layouts: &[&volume_bind_layout],
+        push_constant_ranges: &[],
+    });
+
+    let volume_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("volume raymarch pipeline"),
+        layout: Some(&volume_pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &volume_shader,
+            entry_point: Some("vs_main"),
+            buffers: &[],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &volume_shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth32Float,
+            depth_write_enabled: false,
+            depth_compare: wgpu::CompareFunction::Always,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    });
+
     let smoke_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("smoke pipeline"),
         layout: Some(&mesh_pipeline_layout),
@@ -2038,6 +2233,99 @@ async fn render_wgpu(
         })
     });
 
+    let volume_bind_group = mesh.smoke.as_ref().and_then(|smoke| {
+        let density = smoke.density_frames.get(smoke_frame as usize)?;
+        if density.is_empty() || !smoke.resolution.iter().all(|&r| r > 0) {
+            return None;
+        }
+        let nx = smoke.resolution[0];
+        let ny = smoke.resolution[1];
+        let nz = smoke.resolution[2];
+        let max_density = density.iter().copied().fold(0.0_f32, f32::max).max(1e-5);
+        let (forward, right, up) =
+            smoke_density::camera_basis(camera.eye, camera.target, camera.up);
+        let aspect = w as f32 / h as f32;
+        let tan_half_fov = (0.5 * camera.fov_y_deg.to_radians()).tan();
+        let clear_rgb = [
+            GPU_CLEAR_RGBA[0] as f32 / 255.0,
+            GPU_CLEAR_RGBA[1] as f32 / 255.0,
+            GPU_CLEAR_RGBA[2] as f32 / 255.0,
+        ];
+        let temperature = smoke.stats.max_density.max(0.0) / max_density.max(1.0);
+        let volume_uniform = smoke_density::build_volume_uniform(
+            camera.eye,
+            forward,
+            right,
+            up,
+            aspect,
+            tan_half_fov,
+            smoke.bounds_min,
+            smoke.bounds_max,
+            smoke.resolution,
+            max_density,
+            clear_rgb,
+            temperature * 0.15,
+        );
+        let volume_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("volume uniform"),
+            contents: bytemuck::bytes_of(&volume_uniform),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let density_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("smoke density volume"),
+            size: wgpu::Extent3d {
+                width: nx,
+                height: ny,
+                depth_or_array_layers: nz,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D3,
+            format: wgpu::TextureFormat::R32Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let (padded, bytes_per_row) = pad_density_volume_upload(density, nx, ny, nz);
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &density_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &padded,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(bytes_per_row),
+                rows_per_image: Some(ny),
+            },
+            wgpu::Extent3d {
+                width: nx,
+                height: ny,
+                depth_or_array_layers: nz,
+            },
+        );
+        let density_view = density_texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("smoke density view"),
+            dimension: Some(wgpu::TextureViewDimension::D3),
+            ..Default::default()
+        });
+        Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("volume bind group"),
+            layout: &volume_bind_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: volume_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&density_view),
+                },
+            ],
+        }))
+    });
+
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("native viewport encoder"),
     });
@@ -2092,13 +2380,8 @@ async fn render_wgpu(
             }
         }
 
-        let use_density_preview = mesh
-            .smoke
-            .as_ref()
-            .and_then(|s| s.density_frames.get(smoke_frame as usize))
-            .map(|d| !d.is_empty())
-            .unwrap_or(false);
-        if !use_density_preview {
+        let use_volume_raymarch = volume_bind_group.is_some();
+        if !use_volume_raymarch {
             if let (Some(vb), Some(bg)) = (&smoke_instance_buffer, Some(&smoke_bind_group)) {
                 let count = smoke_particles.as_ref().map(|p| p.len()).unwrap_or(0) as u32;
                 if count > 0 {
@@ -2108,6 +2391,12 @@ async fn render_wgpu(
                     pass.draw(0..6, 0..count);
                 }
             }
+        }
+
+        if let Some(bg) = &volume_bind_group {
+            pass.set_pipeline(&volume_pipeline);
+            pass.set_bind_group(0, bg, &[]);
+            pass.draw(0..3, 0..1);
         }
 
         if let (Some(grid_vb), Some(grid_bg)) = (&grid_vertex_buffer, Some(&grid_bind_group)) {
@@ -2183,31 +2472,26 @@ async fn render_wgpu(
     drop(mapped);
     readback.unmap();
 
-    if let Some(smoke) = &mesh.smoke {
-        if let Some(density) = smoke.density_frames.get(smoke_frame as usize) {
-            if !density.is_empty() && smoke.resolution.iter().all(|&r| r > 0) {
-                let sparse_preset = smoke
-                    .frames
-                    .get(smoke_frame as usize)
-                    .map(|f| f.particle_count < 400)
-                    .unwrap_or(false);
-                smoke_density::composite_smoke_density_projection(
-                    &mut rgba,
-                    w,
-                    h,
-                    GPU_CLEAR_RGBA,
-                    density,
-                    smoke.resolution,
-                    smoke.bounds_min,
-                    smoke.bounds_max,
-                    camera,
-                    sparse_preset,
-                );
+    NativePreviewImage::from_rgba(w, h, rgba, "wgpu")
+}
+
+fn pad_density_volume_upload(density: &[f32], nx: u32, ny: u32, nz: u32) -> (Vec<u8>, u32) {
+    let row_bytes = nx * 4;
+    let aligned_row = wgpu::util::align_to(row_bytes, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+    let mut padded = vec![0u8; aligned_row as usize * ny as usize * nz as usize];
+    let nx_us = nx as usize;
+    let ny_us = ny as usize;
+    for z in 0..nz as usize {
+        for y in 0..ny_us {
+            for x in 0..nx_us {
+                let src_idx = x + nx_us * (y + ny_us * z);
+                let val = density.get(src_idx).copied().unwrap_or(0.0);
+                let dst_offset = z * aligned_row as usize * ny_us + y * aligned_row as usize + x * 4;
+                padded[dst_offset..dst_offset + 4].copy_from_slice(&val.to_le_bytes());
             }
         }
     }
-
-    NativePreviewImage::from_rgba(w, h, rgba, "wgpu")
+    (padded, aligned_row)
 }
 
 #[cfg(test)]
@@ -2337,38 +2621,24 @@ mod tests {
     }
 
     #[test]
-    fn density_projection_paints_visible_cloud() {
+    fn volume_raymarch_paints_visible_cloud() {
         let mesh = cook_viewport_mesh(&Graph::smoke_puff_preset()).expect("cook");
-        let smoke = mesh.smoke.as_ref().expect("smoke");
-        let frame = default_smoke_preview_frame(&mesh) as usize;
-        let density = &smoke.density_frames[frame];
         let camera = default_camera_for_mesh(&mesh);
-        let w = 160u32;
-        let h = 120u32;
-        let mut rgba = vec![0u8; w as usize * h as usize * 4];
-        for i in (0..rgba.len()).step_by(4) {
-            rgba[i..i + 4].copy_from_slice(&GPU_CLEAR_RGBA);
-        }
-        smoke_density::composite_smoke_density_projection(
-            &mut rgba,
-            w,
-            h,
-            GPU_CLEAR_RGBA,
-            density,
-            smoke.resolution,
-            smoke.bounds_min,
-            smoke.bounds_max,
-            &camera,
-            smoke.frames.first().map(|f| f.particle_count < 400).unwrap_or(false),
-        );
+        let frame = default_smoke_preview_frame(&mesh);
+        let preview = render_native_viewport(&mesh, frame, 320, 240, &camera).expect("render");
+        let rgba = preview.decode_rgba().expect("decode");
         let painted = rgba
             .chunks_exact(4)
             .filter(|px| px != &GPU_CLEAR_RGBA)
             .count();
-        let painted_pct = 100.0 * painted as f32 / (w * h) as f32;
+        let painted_pct = 100.0 * painted as f32 / (320.0 * 240.0);
         assert!(
             painted_pct > 1.5 && painted_pct < 45.0,
             "expected soft cloud coverage, got {painted_pct}%"
+        );
+        assert!(
+            !preview_rejects_splat_disk_pattern(&rgba, preview.width, preview.height, GPU_CLEAR_RGBA),
+            "raymarch should not look like splat disks"
         );
     }
 
@@ -2377,12 +2647,19 @@ mod tests {
         let mesh = cook_viewport_mesh(&Graph::smoke_puff_preset()).expect("cook");
         let smoke = mesh.smoke.as_ref().expect("smoke");
         assert!(!smoke.density_frames.is_empty(), "expected density grids");
-        assert!(smoke.resolution[0] > 0);
+        assert!(
+            smoke.resolution[0] >= PREVIEW_MIN_FILM_GRID_RESOLUTION,
+            "film-path grid should be >= {}³, got {:?}",
+            PREVIEW_MIN_FILM_GRID_RESOLUTION,
+            smoke.resolution
+        );
         assert_eq!(smoke.density_frames.len(), smoke.frames.len());
         let frame = default_smoke_preview_frame(&mesh) as usize;
         let grid = &smoke.density_frames[frame];
         let max_d = grid.iter().copied().fold(0.0_f32, f32::max);
         assert!(max_d > 0.0, "density frame should be non-empty");
+        let cell_count = smoke.resolution[0] * smoke.resolution[1] * smoke.resolution[2];
+        assert_eq!(grid.len() as u32, cell_count);
     }
 
     #[test]
@@ -2394,10 +2671,15 @@ mod tests {
         let rgba = preview.decode_rgba().expect("decode");
         assert_eq!(rgba.len(), 640 * 480 * 4);
         let plume = preview_smoke_plume_metrics(&rgba, preview.width, preview.height, GPU_CLEAR_RGBA);
+        let splat_energy = preview_splat_disk_energy(&rgba, preview.width, preview.height, GPU_CLEAR_RGBA);
         assert!(
             preview_has_soft_smoke_plume(&rgba, preview.width, preview.height, GPU_CLEAR_RGBA),
-            "smoke_puff plume metrics: {:?}",
+            "smoke_puff plume metrics: {:?}, splat_energy={splat_energy:.1}",
             plume
+        );
+        assert!(
+            splat_energy < PREVIEW_MAX_SPLAT_DISK_ENERGY,
+            "splat energy too high: {splat_energy:.1}"
         );
     }
 
@@ -2409,10 +2691,15 @@ mod tests {
         let preview = render_native_viewport(&mesh, frame, 640, 480, &camera).expect("render");
         let rgba = preview.decode_rgba().expect("decode");
         let plume = preview_smoke_plume_metrics(&rgba, preview.width, preview.height, GPU_CLEAR_RGBA);
+        let splat_energy = preview_splat_disk_energy(&rgba, preview.width, preview.height, GPU_CLEAR_RGBA);
         assert!(
             preview_has_soft_smoke_plume(&rgba, preview.width, preview.height, GPU_CLEAR_RGBA),
-            "smoke_sphere plume metrics: {:?}",
+            "smoke_sphere plume metrics: {:?}, splat_energy={splat_energy:.1}",
             plume
+        );
+        assert!(
+            splat_energy < PREVIEW_MAX_SPLAT_DISK_ENERGY,
+            "splat energy too high: {splat_energy:.1}"
         );
     }
 
@@ -2525,6 +2812,45 @@ mod tests {
         assert!(
             !preview_has_soft_smoke_plume(&rgba, w, h, CLEAR_RGBA),
             "single slab should not pass soft plume QA"
+        );
+    }
+
+    #[test]
+    fn splat_heuristics_reject_dot_matrix_pattern() {
+        let w = 96u32;
+        let h = 72u32;
+        let mut rgba = vec![0u8; w as usize * h as usize * 4];
+        for i in (0..rgba.len()).step_by(4) {
+            rgba[i..i + 4].copy_from_slice(&GPU_CLEAR_RGBA);
+        }
+        let centers = [(12, 10), (28, 10), (44, 10), (60, 10), (76, 10),
+                       (12, 26), (28, 26), (44, 26), (60, 26), (76, 26),
+                       (12, 42), (28, 42), (44, 42), (60, 42), (76, 42)];
+        for &(cx, cy) in &centers {
+            for y in 0..h {
+                for x in 0..w {
+                    let dx = x as i32 - cx;
+                    let dy = y as i32 - cy;
+                    if (dx * dx + dy * dy) > 20 {
+                        continue;
+                    }
+                    let i = (y as usize * w as usize + x as usize) * 4;
+                    rgba[i] = 215;
+                    rgba[i + 1] = 210;
+                    rgba[i + 2] = 200;
+                    rgba[i + 3] = 255;
+                }
+            }
+        }
+        let energy = preview_splat_disk_energy(&rgba, w, h, GPU_CLEAR_RGBA);
+        let similar = preview_similar_radius_blob_count(&rgba, w, h, GPU_CLEAR_RGBA);
+        assert!(
+            preview_rejects_splat_disk_pattern(&rgba, w, h, GPU_CLEAR_RGBA),
+            "dot matrix should be rejected (energy={energy:.1}, similar_blobs={similar})"
+        );
+        assert!(
+            !preview_has_soft_smoke_plume(&rgba, w, h, GPU_CLEAR_RGBA),
+            "splat dot matrix should not pass soft plume QA"
         );
     }
 
