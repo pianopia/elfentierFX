@@ -19,7 +19,9 @@ JSON-serializable Tauri commands for external agents and the desktop UI. All com
 | `set_smoke_params_command` | `{ request: SetSmokeParamsRequest }` | `Graph` | Update smoke domain/source/solver/**collider** nodes |
 | `set_liquid_params_command` | `{ request: SetLiquidParamsRequest }` | `Graph` | Update liquid domain/source/solver/**collider** nodes |
 | `cook` | `{ graph }` | `CookWithMeshResult` | Cook graph + viewport buffers + native wgpu preview (wgpu-only; failures surface as `native_preview_error`) |
-| `render_native_viewport_command` | `{ request: RenderNativeRequest }` | `NativePreviewImage` | Re-render mesh/smoke/liquid frame with camera (orbit/animation) |
+| `render_native_viewport_command` | `{ request: RenderNativeRequest }` | `NativePreviewImage` | Re-render mesh/smoke/liquid frame with camera (orbit/animation); optional `environment` (HDR preset / custom path) |
+| `get_default_viewport_environment` | — | `ViewportEnvironment` | Default studio-soft HDR settings |
+| `pick_hdr_file_command` | — | `string \| null` | Native file dialog for custom equirect `.hdr` / `.exr` / image |
 | `cook_city_graph` | `{ graph }` | `CookResult` | Stats only (legacy) |
 | `export_gltf` | `{ graph, path }` | `ExportResult` | Export merged city `.glb` |
 | `export_smoke_density_command` | `{ request: { graph, path } }` | `SmokeExportResult` | Export smoke density XY atlas |

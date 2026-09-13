@@ -226,6 +226,21 @@ export interface NativeViewportCamera {
   fov_y_deg: number;
 }
 
+export type ViewportEnvironmentPreset =
+  | "flat_gray"
+  | "studio_soft"
+  | "studio_contrast"
+  | "custom";
+
+export interface ViewportEnvironment {
+  preset: ViewportEnvironmentPreset;
+  hdr_path?: string | null;
+  intensity: number;
+  rotation_yaw_deg: number;
+  diffuse_blur: number;
+  enabled: boolean;
+}
+
 export interface NativePreviewImage {
   width: number;
   height: number;

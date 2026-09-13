@@ -7,6 +7,7 @@ pub mod buffer;
 pub mod building;
 pub mod collider;
 pub mod mesh_sdf;
+pub mod environment;
 pub mod explain;
 pub mod export;
 pub mod graph;

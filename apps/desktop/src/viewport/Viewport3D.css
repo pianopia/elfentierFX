@@ -22,6 +22,43 @@
   flex-shrink: 0;
 }
 
+.viewport3d-env {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem 0.85rem;
+  padding: 0.35rem 0.65rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(0, 0, 0, 0.22);
+  font-size: 0.68rem;
+  color: #8f98ab;
+  flex-shrink: 0;
+}
+
+.viewport3d-env-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.viewport3d-env-field select,
+.viewport3d-env-button {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #c5ccd8;
+  font-size: 0.68rem;
+  padding: 0.15rem 0.35rem;
+}
+
+.viewport3d-env-field input[type="range"] {
+  width: 72px;
+}
+
+.viewport3d-env-button {
+  cursor: pointer;
+}
+
 .viewport3d-title {
   font-weight: 600;
   color: #c5ccd8;

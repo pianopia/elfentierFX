@@ -3,8 +3,11 @@ import { agentApi } from "../agent/api";
 import type {
   NativePreviewImage,
   NativeViewportCamera,
+  ViewportEnvironment,
+  ViewportEnvironmentPreset,
   ViewportMesh,
 } from "../types/graph";
+import { saveViewportEnvironment } from "./environmentStorage";
 import "./Viewport3D.css";
 
 interface Viewport3DProps {
@@ -12,6 +15,8 @@ interface Viewport3DProps {
   nativePreview?: NativePreviewImage | null;
   nativeCamera?: NativeViewportCamera | null;
   initialError?: string | null;
+  environment: ViewportEnvironment;
+  onEnvironmentChange: (next: ViewportEnvironment) => void;
 }
 
 interface ViewportStats {
@@ -129,16 +134,26 @@ function fluidLabel(mesh: ViewportMesh | null): string {
   return "";
 }
 
+const PRESET_LABELS: Record<ViewportEnvironmentPreset, string> = {
+  flat_gray: "Flat gray",
+  studio_soft: "Studio soft",
+  studio_contrast: "Studio contrast",
+  custom: "Custom HDR",
+};
+
 export default function Viewport3D({
   mesh,
   nativePreview,
   nativeCamera,
   initialError = null,
+  environment,
+  onEnvironmentChange,
 }: Viewport3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const meshRef = useRef<ViewportMesh | null>(null);
   const cameraRef = useRef<NativeViewportCamera | null>(null);
+  const environmentRef = useRef(environment);
   const fluidFrameRef = useRef(0);
   const renderPendingRef = useRef(false);
   const dragRef = useRef<{ x: number; y: number } | null>(null);
@@ -150,6 +165,10 @@ export default function Viewport3D({
   const [viewportError, setViewportError] = useState<string | null>(initialError);
 
   const canRender = !!mesh && !viewportError;
+
+  useEffect(() => {
+    environmentRef.current = environment;
+  }, [environment]);
 
   const reportRenderError = useCallback((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
@@ -172,6 +191,7 @@ export default function Viewport3D({
           width,
           height,
           camera,
+          environmentRef.current,
         );
         if (canvasRef.current) {
           drawPreview(canvasRef.current, preview);
@@ -190,6 +210,21 @@ export default function Viewport3D({
     },
     [reportRenderError],
   );
+
+  const updateEnvironment = useCallback(
+    (patch: Partial<ViewportEnvironment>) => {
+      const next = { ...environmentRef.current, ...patch };
+      environmentRef.current = next;
+      saveViewportEnvironment(next);
+      onEnvironmentChange(next);
+    },
+    [onEnvironmentChange],
+  );
+
+  useEffect(() => {
+    if (!canRender || !mesh || !cameraRef.current) return;
+    void renderFrame(fluidFrameRef.current, cameraRef.current);
+  }, [environment, canRender, mesh, renderFrame]);
 
   useEffect(() => {
     setViewportError(initialError);
@@ -272,6 +307,17 @@ export default function Viewport3D({
 
   const label = fluidLabel(mesh);
 
+  const handlePickHdr = async () => {
+    try {
+      const path = await agentApi.pickHdrFile();
+      if (path) {
+        updateEnvironment({ preset: "custom", hdr_path: path, enabled: true });
+      }
+    } catch (error) {
+      console.error("HDR file picker failed:", error);
+    }
+  };
+
   return (
     <div className="viewport3d">
       <div className="viewport3d-chrome">
@@ -289,6 +335,68 @@ export default function Viewport3D({
               wgpu preview
             </span>
           </>
+        )}
+      </div>
+      <div className="viewport3d-env">
+        <label className="viewport3d-env-field">
+          <span>Env</span>
+          <select
+            value={environment.preset}
+            onChange={(event) =>
+              updateEnvironment({
+                preset: event.target.value as ViewportEnvironmentPreset,
+                enabled: event.target.value !== "flat_gray",
+              })
+            }
+          >
+            {Object.entries(PRESET_LABELS).map(([value, labelText]) => (
+              <option key={value} value={value}>{labelText}</option>
+            ))}
+          </select>
+        </label>
+        <label className="viewport3d-env-field">
+          <span>Intensity</span>
+          <input
+            type="range"
+            min={0.2}
+            max={3}
+            step={0.05}
+            value={environment.intensity}
+            onChange={(event) =>
+              updateEnvironment({ intensity: Number(event.target.value) })
+            }
+          />
+        </label>
+        <label className="viewport3d-env-field">
+          <span>Yaw</span>
+          <input
+            type="range"
+            min={-180}
+            max={180}
+            step={1}
+            value={environment.rotation_yaw_deg}
+            onChange={(event) =>
+              updateEnvironment({ rotation_yaw_deg: Number(event.target.value) })
+            }
+          />
+        </label>
+        <label className="viewport3d-env-field">
+          <span>Diffuse blur</span>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={environment.diffuse_blur}
+            onChange={(event) =>
+              updateEnvironment({ diffuse_blur: Number(event.target.value) })
+            }
+          />
+        </label>
+        {environment.preset === "custom" && (
+          <button type="button" className="viewport3d-env-button" onClick={handlePickHdr}>
+            Pick HDR
+          </button>
         )}
       </div>
       <div className="viewport3d-canvas viewport3d-native" ref={containerRef}>
