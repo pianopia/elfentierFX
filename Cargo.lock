@@ -846,6 +846,7 @@ dependencies = [
 name = "elfentierfx-desktop"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "bytemuck",
  "elfentier_core",
  "pollster",

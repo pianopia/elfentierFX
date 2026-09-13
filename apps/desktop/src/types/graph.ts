@@ -227,7 +227,8 @@ export interface NativeViewportCamera {
 export interface NativePreviewImage {
   width: number;
   height: number;
-  rgba: number[];
+  /** Base64-encoded RGBA8 pixels (`width * height * 4` bytes when decoded). */
+  rgba_base64: string;
   backend: string;
 }
 
