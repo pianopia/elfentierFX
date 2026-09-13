@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import type { ViewportMesh } from "../types/graph";
+import type { SmokePreviewImage, ViewportCook, ViewportMesh } from "../types/graph";
 import "./Viewport3D.css";
 
-type RendererKind = "webgpu" | "webgl";
+type RendererKind = "webgpu" | "webgl" | "wgpu-smoke";
 
 interface Viewport3DProps {
-  mesh: ViewportMesh | null;
+  viewport: ViewportCook | null;
+  smokePreview: SmokePreviewImage | null;
 }
 
 interface ViewportStats {
@@ -43,6 +44,29 @@ function fitCameraToContent(
   const maxDim = Math.max(size.x, size.y, size.z, 8);
   const dist = maxDim * 1.6;
   camera.position.set(center.x + dist * 0.7, center.y + dist * 0.55, center.z + dist * 0.85);
+  controls.target.copy(center);
+  controls.update();
+}
+
+function fitCameraToSmokeBounds(
+  camera: THREE.PerspectiveCamera,
+  controls: OrbitControls,
+  boundsMin: [number, number, number],
+  boundsMax: [number, number, number],
+) {
+  const center = new THREE.Vector3(
+    (boundsMin[0] + boundsMax[0]) * 0.5,
+    (boundsMin[1] + boundsMax[1]) * 0.5,
+    (boundsMin[2] + boundsMax[2]) * 0.5,
+  );
+  const size = new THREE.Vector3(
+    boundsMax[0] - boundsMin[0],
+    boundsMax[1] - boundsMin[1],
+    boundsMax[2] - boundsMin[2],
+  );
+  const maxDim = Math.max(size.x, size.y, size.z, 4);
+  const dist = maxDim * 2.2;
+  camera.position.set(center.x + dist * 0.55, center.y + dist * 0.45, center.z + dist * 0.75);
   controls.target.copy(center);
   controls.update();
 }
@@ -85,14 +109,25 @@ function applyMeshToScene(
   fitCameraToContent(camera, controls, mesh);
 }
 
-export default function Viewport3D({ mesh }: Viewport3DProps) {
+function drawSmokePreview(canvas: HTMLCanvasElement, preview: SmokePreviewImage) {
+  canvas.width = preview.width;
+  canvas.height = preview.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  const imageData = new ImageData(preview.width, preview.height);
+  imageData.data.set(preview.rgba);
+  ctx.putImageData(imageData, 0, 0);
+}
+
+export default function Viewport3D({ viewport, smokePreview }: Viewport3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const smokeCanvasRef = useRef<HTMLCanvasElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
   const instancedRef = useRef<THREE.InstancedMesh | null>(null);
   const readyRef = useRef(false);
-  const meshRef = useRef<ViewportMesh | null>(null);
+  const viewportRef = useRef<ViewportCook | null>(null);
   const [stats, setStats] = useState<ViewportStats>({
     fps: 0,
     triangles: 0,
@@ -101,7 +136,23 @@ export default function Viewport3D({ mesh }: Viewport3DProps) {
     renderer: "webgl",
   });
 
+  const isSmoke = viewport?.output_kind === "smoke";
+
   useEffect(() => {
+    if (!isSmoke || !smokePreview || !smokeCanvasRef.current) return;
+    drawSmokePreview(smokeCanvasRef.current, smokePreview);
+    setStats((prev) => ({
+      ...prev,
+      renderer: "wgpu-smoke",
+      drawCalls: 1,
+      instances: viewport?.smoke?.density.length ?? 0,
+      triangles: 0,
+    }));
+  }, [isSmoke, smokePreview, viewport]);
+
+  useEffect(() => {
+    if (isSmoke) return;
+
     const container = containerRef.current;
     if (!container) return;
 
@@ -192,19 +243,13 @@ export default function Viewport3D({ mesh }: Viewport3DProps) {
       setStats((prev) => ({ ...prev, renderer: rendererKind }));
       resize();
       readyRef.current = true;
-      if (meshRef.current && controlsRef.current) {
-        applyMeshToScene(
-          scene,
-          meshRef.current,
-          instancedRef,
-          camera,
-          controlsRef.current,
-        );
+      const mesh = viewportRef.current?.mesh;
+      if (mesh && controlsRef.current) {
+        applyMeshToScene(scene, mesh, instancedRef, camera, controlsRef.current);
         setStats((prev) => ({
           ...prev,
-          triangles:
-            meshRef.current!.triangle_count * meshRef.current!.instance_count,
-          instances: meshRef.current!.instance_count,
+          triangles: mesh.triangle_count * mesh.instance_count,
+          instances: mesh.instance_count,
           drawCalls: 1,
         }));
       }
@@ -216,7 +261,6 @@ export default function Viewport3D({ mesh }: Viewport3DProps) {
         if (disposed) return;
         animationId = requestAnimationFrame(tick);
         controlsRef.current?.update();
-
         (gpuRenderer ?? glRenderer)?.render(scene, camera);
 
         frames += 1;
@@ -263,10 +307,23 @@ export default function Viewport3D({ mesh }: Viewport3DProps) {
         container.removeChild(container.firstChild);
       }
     };
-  }, []);
+  }, [isSmoke]);
 
   useEffect(() => {
-    meshRef.current = mesh;
+    viewportRef.current = viewport;
+    if (isSmoke) {
+      if (viewport?.smoke && cameraRef.current && controlsRef.current) {
+        fitCameraToSmokeBounds(
+          cameraRef.current,
+          controlsRef.current,
+          viewport.smoke.bounds_min,
+          viewport.smoke.bounds_max,
+        );
+      }
+      return;
+    }
+
+    const mesh = viewport?.mesh;
     const scene = sceneRef.current;
     const camera = cameraRef.current;
     const controls = controlsRef.current;
@@ -279,21 +336,46 @@ export default function Viewport3D({ mesh }: Viewport3DProps) {
       instances: mesh.instance_count,
       drawCalls: 1,
     }));
-  }, [mesh]);
+  }, [viewport, isSmoke]);
+
+  const rendererLabel =
+    stats.renderer === "wgpu-smoke"
+      ? "wgpu"
+      : stats.renderer === "webgpu"
+        ? "Three WebGPU (fallback mesh)"
+        : "WebGL";
 
   return (
     <div className="viewport3d">
       <div className="viewport3d-chrome">
         <span className="viewport3d-title">3D View</span>
         <span className="viewport3d-stat">
-          {stats.renderer === "webgpu" ? "WebGPU" : "WebGL"} · {stats.fps} fps
+          {rendererLabel} · {stats.fps} fps
         </span>
-        <span className="viewport3d-stat">
-          {stats.instances} inst · {(stats.triangles / 1000).toFixed(1)}k tris · {stats.drawCalls} draw
-        </span>
+        {isSmoke ? (
+          <span className="viewport3d-stat">
+            {viewport?.smoke?.nx ?? 0}×{viewport?.smoke?.ny ?? 0}×{viewport?.smoke?.nz ?? 0} grid · wgpu raymarch
+          </span>
+        ) : (
+          <span className="viewport3d-stat">
+            {stats.instances} inst · {(stats.triangles / 1000).toFixed(1)}k tris · {stats.drawCalls} draw
+          </span>
+        )}
       </div>
-      <div className="viewport3d-canvas" ref={containerRef} />
-      {!mesh && <div className="viewport3d-empty">Cook to preview city geometry</div>}
+      {isSmoke ? (
+        <div className="viewport3d-canvas viewport3d-smoke">
+          <canvas ref={smokeCanvasRef} className="viewport3d-smoke-canvas" />
+          {!smokePreview && (
+            <div className="viewport3d-empty">Cook to preview smoke via native wgpu</div>
+          )}
+        </div>
+      ) : (
+        <div className="viewport3d-canvas" ref={containerRef}>
+          {!viewport?.mesh && (
+            <div className="viewport3d-empty">Cook to preview city geometry</div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

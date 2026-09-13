@@ -11,13 +11,14 @@ pub mod graph;
 pub mod mesh;
 pub mod placement;
 pub mod prompt;
+pub mod smoke;
 pub mod viewport;
 
 use mesh::create_unit_box_mesh;
 use serde::{Deserialize, Serialize};
 
 /// Semantic version of the core library.
-pub const CORE_VERSION: &str = "0.1.0-alpha.2";
+pub const CORE_VERSION: &str = "0.1.0-alpha.3";
 
 /// Returns the core library version string.
 pub fn core_version() -> &'static str {
@@ -53,8 +54,8 @@ mod tests {
     use graph::Graph;
 
     #[test]
-    fn core_version_is_alpha_two() {
-        assert!(core_version().contains("alpha.2"));
+    fn core_version_is_alpha_three() {
+        assert!(core_version().contains("alpha.3"));
     }
 
     #[test]

@@ -7,7 +7,9 @@ import type {
   CookResult,
   ExportResult,
   Graph,
-  ViewportMesh,
+  SmokePreviewImage,
+  SmokeVolumeExport,
+  ViewportCook,
 } from "./types/graph";
 import Viewport3D from "./viewport/Viewport3D";
 import "./App.css";
@@ -18,8 +20,10 @@ function App() {
   const [preset, setPreset] = useState<Graph | null>(null);
   const [graph, setGraph] = useState<Graph | null>(null);
   const [cookResult, setCookResult] = useState<CookResult | null>(null);
-  const [viewportMesh, setViewportMesh] = useState<ViewportMesh | null>(null);
+  const [viewport, setViewport] = useState<ViewportCook | null>(null);
+  const [smokePreview, setSmokePreview] = useState<SmokePreviewImage | null>(null);
   const [exportResult, setExportResult] = useState<ExportResult | null>(null);
+  const [smokeExport, setSmokeExport] = useState<SmokeVolumeExport | null>(null);
   const [promptSummary, setPromptSummary] = useState("");
   const [explainText, setExplainText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -71,26 +75,41 @@ function App() {
     [refreshExplain],
   );
 
-  const handleLoadPreset = useCallback(async () => {
-    setBusy(true);
-    setStatus("Loading shop street preset…");
-    try {
-      const shopPreset = await agentApi.getShopStreetPreset();
-      setPreset(shopPreset);
-      setGraph(shopPreset);
-      graphRef.current = shopPreset;
-      setCookResult(null);
-      setViewportMesh(null);
-      setExportResult(null);
-      setPromptSummary("");
-      setStatus("Shop street preset loaded");
-      refreshExplain(shopPreset);
-    } catch (error) {
-      setStatus(`Preset failed: ${String(error)}`);
-    } finally {
-      setBusy(false);
-    }
-  }, [refreshExplain]);
+  const loadPresetGraph = useCallback(
+    async (loader: () => Promise<Graph>, label: string) => {
+      setBusy(true);
+      setStatus(`Loading ${label}…`);
+      try {
+        const next = await loader();
+        setPreset(next);
+        setGraph(next);
+        graphRef.current = next;
+        setCookResult(null);
+        setViewport(null);
+        setSmokePreview(null);
+        setExportResult(null);
+        setSmokeExport(null);
+        setPromptSummary("");
+        setStatus(`${label} loaded`);
+        refreshExplain(next);
+      } catch (error) {
+        setStatus(`Preset failed: ${String(error)}`);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [refreshExplain],
+  );
+
+  const handleLoadShopPreset = useCallback(
+    () => loadPresetGraph(agentApi.getShopStreetPreset, "Shop street preset"),
+    [loadPresetGraph],
+  );
+
+  const handleLoadSmokePreset = useCallback(
+    () => loadPresetGraph(agentApi.getSmokePlumePreset, "Smoke plume preset"),
+    [loadPresetGraph],
+  );
 
   const handleCook = useCallback(async () => {
     const current = graphRef.current;
@@ -99,14 +118,21 @@ function App() {
       return;
     }
     setBusy(true);
-    setStatus("Cooking city graph…");
+    setStatus("Cooking graph…");
     try {
       const result = await agentApi.cook(current);
       setCookResult(result.stats);
-      setViewportMesh(result.mesh);
-      setStatus(
-        `Cooked "${result.stats.graph_name}": ${result.stats.instance_count} instances · ${result.stats.vertex_count} verts · ${result.stats.triangle_count} tris`,
-      );
+      setViewport(result.viewport);
+      setSmokePreview(result.smoke_preview);
+      if (result.stats.output_kind === "smoke") {
+        setStatus(
+          `Cooked "${result.stats.graph_name}": ${result.stats.instance_count} voxels · max density ${result.viewport.smoke?.max_density.toFixed(2) ?? "?"}`,
+        );
+      } else {
+        setStatus(
+          `Cooked "${result.stats.graph_name}": ${result.stats.instance_count} instances · ${result.stats.vertex_count} verts · ${result.stats.triangle_count} tris`,
+        );
+      }
     } catch (error) {
       setStatus(`Cook failed: ${String(error)}`);
     } finally {
@@ -121,14 +147,24 @@ function App() {
       return;
     }
     setBusy(true);
-    setStatus("Exporting glTF…");
+    const isSmoke = current.nodes.some((n) => n.kind === "smoke_root");
+    setStatus(isSmoke ? "Exporting smoke volume…" : "Exporting glTF…");
     try {
-      const path = "/tmp/elfentier_city.glb";
-      const result = await agentApi.exportGltf(current, path);
-      setExportResult(result);
-      setStatus(
-        `Exported ${result.byte_len} bytes → ${result.path} (${result.triangle_count} tris)`,
-      );
+      if (isSmoke) {
+        const path = "/tmp/elfentier_smoke.raw";
+        const result = await agentApi.exportSmokeVolume(current, path);
+        setSmokeExport(result);
+        setExportResult(null);
+        setStatus(`Exported ${result.byte_len} bytes → ${result.path} (${result.format})`);
+      } else {
+        const path = "/tmp/elfentier_city.glb";
+        const result = await agentApi.exportGltf(current, path);
+        setExportResult(result);
+        setSmokeExport(null);
+        setStatus(
+          `Exported ${result.byte_len} bytes → ${result.path} (${result.triangle_count} tris)`,
+        );
+      }
     } catch (error) {
       setStatus(`Export failed: ${String(error)}`);
     } finally {
@@ -149,8 +185,10 @@ function App() {
         setPreset(result.graph);
         setPromptSummary(result.summary);
         setCookResult(null);
-        setViewportMesh(null);
+        setViewport(null);
+        setSmokePreview(null);
         setExportResult(null);
+        setSmokeExport(null);
         setStatus(result.summary || "Prompt applied");
         refreshExplain(result.graph);
       } catch (error) {
@@ -162,15 +200,19 @@ function App() {
     [refreshExplain],
   );
 
+  const isSmokeGraph = graph?.nodes.some((n) => n.kind === "smoke_root") ?? false;
+
   return (
     <div className="app">
       <header className="app-header">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">◆</span>
           <h1>elfentierFX</h1>
-          <span className="brand-tag">Alpha 2</span>
+          <span className="brand-tag">Alpha 3</span>
         </div>
-        <p className="brand-subtitle">Building → city procedural slice · 3D viewport · prompt-driven graph</p>
+        <p className="brand-subtitle">
+          Building → city · Fluids smoke Phase 1 · native wgpu preview · prompt-driven graph
+        </p>
       </header>
 
       <PromptBar
@@ -185,11 +227,11 @@ function App() {
           left={
             <NodeCanvas
               preset={preset}
-              graphName={graph?.name ?? "City Graph"}
+              graphName={graph?.name ?? "Graph"}
               onGraphChange={handleGraphChange}
             />
           }
-          right={<Viewport3D mesh={viewportMesh} />}
+          right={<Viewport3D viewport={viewport} smokePreview={smokePreview} />}
         />
       </main>
 
@@ -200,25 +242,43 @@ function App() {
           <button
             type="button"
             className="action-button secondary"
-            onClick={handleLoadPreset}
+            onClick={handleLoadShopPreset}
             disabled={busy}
           >
-            Shop → Street preset
+            Shop → Street
+          </button>
+          <button
+            type="button"
+            className="action-button secondary"
+            onClick={handleLoadSmokePreset}
+            disabled={busy}
+          >
+            Smoke plume
           </button>
           <button type="button" className="action-button" onClick={handleCook} disabled={busy}>
             Cook
           </button>
           <button type="button" className="action-button" onClick={handleExport} disabled={busy}>
-            Export glTF
+            {isSmokeGraph ? "Export volume" : "Export glTF"}
           </button>
-          {cookResult && (
+          {cookResult && cookResult.output_kind === "smoke" && (
+            <span className="mesh-stats">
+              {cookResult.instance_count} voxels
+            </span>
+          )}
+          {cookResult && cookResult.output_kind !== "smoke" && (
             <span className="mesh-stats">
               {cookResult.instance_count} inst · {cookResult.vertex_count}v · {cookResult.triangle_count}t
             </span>
           )}
           {exportResult && (
             <span className="export-path" title={exportResult.path}>
-              exported
+              glb exported
+            </span>
+          )}
+          {smokeExport && (
+            <span className="export-path" title={smokeExport.notes}>
+              volume exported
             </span>
           )}
         </div>

@@ -1,14 +1,18 @@
+mod wgpu_viewport;
+
 use elfentier_core::{
     agent::{get_preset, list_presets, set_params, PresetInfo},
     building::BuildingParams,
     core_version, create_box_mesh,
     explain::explain_graph,
-    graph::{cook_and_export, cook_graph, Graph},
+    export::{export_smoke_volume_raw, SmokeVolumeExport},
+    graph::{cook_and_export, cook_graph, graph_output_kind, Graph, GraphOutputKind},
     prompt::{apply_prompt, ApplyPromptResult},
-    viewport::{cook_viewport_mesh, ViewportMesh},
+    viewport::{cook_viewport, ViewportCook, SmokePreviewImage},
     MeshStats,
 };
 use serde::{Deserialize, Serialize};
+use wgpu_viewport::render_smoke_preview;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct CookResult {
@@ -17,12 +21,14 @@ struct CookResult {
     triangle_count: u32,
     instance_count: u32,
     graph_name: String,
+    output_kind: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct CookWithMeshResult {
+struct CookWithViewportResult {
     stats: CookResult,
-    mesh: ViewportMesh,
+    viewport: ViewportCook,
+    smoke_preview: Option<SmokePreviewImage>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -62,6 +68,11 @@ fn get_shop_street_preset() -> Graph {
 }
 
 #[tauri::command]
+fn get_smoke_plume_preset() -> Graph {
+    Graph::smoke_plume_preset()
+}
+
+#[tauri::command]
 fn get_graph(graph: Graph) -> Graph {
     graph
 }
@@ -79,28 +90,43 @@ fn set_params_command(request: SetParamsRequest) -> Graph {
 #[tauri::command]
 fn cook_city_graph(graph: Graph) -> Result<CookResult, String> {
     let result = cook_graph(&graph)?;
+    let kind = graph_output_kind(&graph);
     Ok(CookResult {
         vertex_count: result.vertex_count,
         index_count: result.index_count,
         triangle_count: result.triangle_count,
         instance_count: result.instance_count,
         graph_name: result.graph_name,
+        output_kind: match kind {
+            GraphOutputKind::City => "city".into(),
+            GraphOutputKind::Smoke => "smoke".into(),
+        },
     })
 }
 
 #[tauri::command]
-fn cook(graph: Graph) -> Result<CookWithMeshResult, String> {
+fn cook(graph: Graph) -> Result<CookWithViewportResult, String> {
     let stats = cook_graph(&graph)?;
-    let mesh = cook_viewport_mesh(&graph)?;
-    Ok(CookWithMeshResult {
+    let viewport = cook_viewport(&graph)?;
+    let smoke_preview = if let Some(smoke) = viewport.smoke.as_ref() {
+        Some(render_smoke_preview(smoke, 640, 480)?)
+    } else {
+        None
+    };
+    Ok(CookWithViewportResult {
         stats: CookResult {
             vertex_count: stats.vertex_count,
             index_count: stats.index_count,
             triangle_count: stats.triangle_count,
             instance_count: stats.instance_count,
             graph_name: stats.graph_name,
+            output_kind: match viewport.output_kind {
+                GraphOutputKind::City => "city".into(),
+                GraphOutputKind::Smoke => "smoke".into(),
+            },
         },
-        mesh,
+        viewport,
+        smoke_preview,
     })
 }
 
@@ -118,6 +144,12 @@ fn export_city_graph(graph: Graph, path: String) -> Result<ExportResult, String>
 #[tauri::command]
 fn export_gltf(graph: Graph, path: String) -> Result<ExportResult, String> {
     export_city_graph(graph, path)
+}
+
+#[tauri::command]
+fn export_smoke_volume(graph: Graph, path: String) -> Result<SmokeVolumeExport, String> {
+    let grid = elfentier_core::graph::evaluate_smoke(&graph)?;
+    export_smoke_volume_raw(&grid, &path).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -143,6 +175,7 @@ pub fn run() {
             get_core_version,
             create_box_mesh_command,
             get_shop_street_preset,
+            get_smoke_plume_preset,
             get_graph,
             list_presets_command,
             set_params_command,
@@ -150,6 +183,7 @@ pub fn run() {
             cook,
             export_city_graph,
             export_gltf,
+            export_smoke_volume,
             apply_prompt_command,
             explain_graph_command,
             load_preset,

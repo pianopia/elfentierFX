@@ -61,6 +61,16 @@ pub fn interpret_prompt(text: &str) -> Vec<PromptIntent> {
         });
     }
 
+    // Smoke / 煙
+    if contains_any(
+        &normalized,
+        &["煙", "smoke", "gas plume", "smoke plume", "スモーク"],
+    ) {
+        intents.push(PromptIntent::LoadPreset {
+            preset_id: "smoke_plume".into(),
+        });
+    }
+
     // Grid placement / グリッド
     if contains_any(
         &normalized,
@@ -182,6 +192,10 @@ pub fn apply_edits(graph: &Graph, edits: &[GraphEdit]) -> Graph {
             GraphEdit::LoadPreset { preset_id } => {
                 if preset_id == "shop_street" {
                     result = Graph::shop_street_preset();
+                } else if preset_id == "grid_block" {
+                    result = Graph::grid_block_preset();
+                } else if preset_id == "smoke_plume" {
+                    result = Graph::smoke_plume_preset();
                 }
             }
             GraphEdit::SetBuildingParams { node_id, params } => {
@@ -261,6 +275,9 @@ fn switch_placement(graph: &Graph, mode: PlacementMode) -> Graph {
                     offset_from_path: 0.0,
                 }),
                 grid_input: None,
+                smoke_domain: None,
+                smoke_source: None,
+                smoke_solver: None,
             });
             g.edges.push(crate::graph::Edge {
                 from: mesh_id.clone(),
@@ -289,6 +306,9 @@ fn switch_placement(graph: &Graph, mode: PlacementMode) -> Graph {
                 building_params: None,
                 path_input: None,
                 grid_input: Some(GridInput::default()),
+                smoke_domain: None,
+                smoke_source: None,
+                smoke_solver: None,
             });
             g.edges.push(crate::graph::Edge {
                 from: mesh_id.clone(),
@@ -427,6 +447,15 @@ mod tests {
         assert!(intents
             .iter()
             .any(|i| matches!(i, PromptIntent::SetFloors { floors: 5 })));
+    }
+
+    #[test]
+    fn interprets_smoke_jp() {
+        let intents = interpret_prompt("煙のプルーム");
+        assert!(intents.iter().any(|i| matches!(
+            i,
+            PromptIntent::LoadPreset { preset_id } if preset_id == "smoke_plume"
+        )));
     }
 
     #[test]

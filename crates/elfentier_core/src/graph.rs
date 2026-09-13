@@ -6,6 +6,9 @@ use crate::mesh::{Mesh, Vec3};
 use crate::placement::{
     fill_grid, place_along_path, GridInput, InstanceTransform, PathInput,
 };
+use crate::smoke::{
+    simulate_smoke, SmokeDomainParams, SmokeGrid, SmokeSolverParams, SmokeSourceParams,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -23,6 +26,10 @@ pub enum NodeKind {
     FillGrid,
     MergeInstances,
     CityRoot,
+    SmokeDomain,
+    SmokeSource,
+    SmokeSolver,
+    SmokeRoot,
 }
 
 /// A node in the procedural graph.
@@ -37,6 +44,12 @@ pub struct Node {
     pub path_input: Option<PathInput>,
     #[serde(default)]
     pub grid_input: Option<GridInput>,
+    #[serde(default)]
+    pub smoke_domain: Option<SmokeDomainParams>,
+    #[serde(default)]
+    pub smoke_source: Option<SmokeSourceParams>,
+    #[serde(default)]
+    pub smoke_solver: Option<SmokeSolverParams>,
 }
 
 /// Edge connecting an output port to an input port.
@@ -79,6 +92,9 @@ impl Graph {
                     building_params: Some(BuildingParams::default()),
                     path_input: None,
                     grid_input: None,
+                    smoke_domain: None,
+                    smoke_source: None,
+                    smoke_solver: None,
                 },
                 Node {
                     id: mesh_id.clone(),
@@ -87,6 +103,9 @@ impl Graph {
                     building_params: None,
                     path_input: None,
                     grid_input: None,
+                    smoke_domain: None,
+                    smoke_source: None,
+                    smoke_solver: None,
                 },
                 Node {
                     id: grid_id.clone(),
@@ -95,6 +114,9 @@ impl Graph {
                     building_params: None,
                     path_input: None,
                     grid_input: Some(GridInput::default()),
+                    smoke_domain: None,
+                    smoke_source: None,
+                    smoke_solver: None,
                 },
                 Node {
                     id: root_id.clone(),
@@ -103,6 +125,9 @@ impl Graph {
                     building_params: None,
                     path_input: None,
                     grid_input: None,
+                    smoke_domain: None,
+                    smoke_source: None,
+                    smoke_solver: None,
                 },
             ],
             edges: vec![
@@ -138,6 +163,9 @@ impl Graph {
                     building_params: Some(BuildingParams::shop_preset()),
                     path_input: None,
                     grid_input: None,
+                    smoke_domain: None,
+                    smoke_source: None,
+                    smoke_solver: None,
                 },
                 Node {
                     id: mesh_id.clone(),
@@ -146,6 +174,9 @@ impl Graph {
                     building_params: None,
                     path_input: None,
                     grid_input: None,
+                    smoke_domain: None,
+                    smoke_source: None,
+                    smoke_solver: None,
                 },
                 Node {
                     id: place_id.clone(),
@@ -159,6 +190,9 @@ impl Graph {
                         offset_from_path: 0.0,
                     }),
                     grid_input: None,
+                    smoke_domain: None,
+                    smoke_source: None,
+                    smoke_solver: None,
                 },
                 Node {
                     id: root_id.clone(),
@@ -167,6 +201,9 @@ impl Graph {
                     building_params: None,
                     path_input: None,
                     grid_input: None,
+                    smoke_domain: None,
+                    smoke_source: None,
+                    smoke_solver: None,
                 },
             ],
             edges: vec![
@@ -184,6 +221,94 @@ impl Graph {
                 },
             ],
         }
+    }
+
+    pub fn smoke_plume_preset() -> Self {
+        let domain_id = NodeId("smoke_domain".into());
+        let source_id = NodeId("smoke_source".into());
+        let solver_id = NodeId("smoke_solver".into());
+        let root_id = NodeId("smoke_root".into());
+
+        Self {
+            name: "Smoke Plume".into(),
+            nodes: vec![
+                Node {
+                    id: domain_id.clone(),
+                    kind: NodeKind::SmokeDomain,
+                    label: "Smoke Domain".into(),
+                    building_params: None,
+                    path_input: None,
+                    grid_input: None,
+                    smoke_domain: Some(SmokeDomainParams::default()),
+                    smoke_source: None,
+                    smoke_solver: None,
+                },
+                Node {
+                    id: source_id.clone(),
+                    kind: NodeKind::SmokeSource,
+                    label: "Smoke Source".into(),
+                    building_params: None,
+                    path_input: None,
+                    grid_input: None,
+                    smoke_domain: None,
+                    smoke_source: Some(SmokeSourceParams::default()),
+                    smoke_solver: None,
+                },
+                Node {
+                    id: solver_id.clone(),
+                    kind: NodeKind::SmokeSolver,
+                    label: "Smoke Solver".into(),
+                    building_params: None,
+                    path_input: None,
+                    grid_input: None,
+                    smoke_domain: None,
+                    smoke_source: None,
+                    smoke_solver: Some(SmokeSolverParams::default()),
+                },
+                Node {
+                    id: root_id.clone(),
+                    kind: NodeKind::SmokeRoot,
+                    label: "Smoke Root".into(),
+                    building_params: None,
+                    path_input: None,
+                    grid_input: None,
+                    smoke_domain: None,
+                    smoke_source: None,
+                    smoke_solver: None,
+                },
+            ],
+            edges: vec![
+                Edge {
+                    from: domain_id.clone(),
+                    to: source_id.clone(),
+                },
+                Edge {
+                    from: source_id.clone(),
+                    to: solver_id.clone(),
+                },
+                Edge {
+                    from: solver_id.clone(),
+                    to: root_id.clone(),
+                },
+            ],
+        }
+    }
+}
+
+/// Detects whether a graph targets city or smoke output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GraphOutputKind {
+    City,
+    Smoke,
+}
+
+/// Returns the primary output kind for a graph document.
+pub fn graph_output_kind(graph: &Graph) -> GraphOutputKind {
+    if graph.nodes.iter().any(|n| n.kind == NodeKind::SmokeRoot) {
+        GraphOutputKind::Smoke
+    } else {
+        GraphOutputKind::City
     }
 }
 
@@ -207,6 +332,12 @@ enum NodeValue {
         base_mesh: Mesh,
         instances: Vec<InstanceTransform>,
     },
+    SmokeDomain(SmokeDomainParams),
+    SmokeConfig {
+        domain: SmokeDomainParams,
+        source: SmokeSourceParams,
+    },
+    Smoke(SmokeGrid),
 }
 
 /// Evaluated city geometry ready for stats or export.
@@ -225,18 +356,52 @@ pub struct CityInstanced {
 
 /// Evaluates the graph and returns combined mesh statistics.
 pub fn cook_graph(graph: &Graph) -> Result<CookResult, String> {
-    let city = evaluate_city(graph)?;
-    Ok(CookResult {
-        vertex_count: city.mesh.vertex_count(),
-        index_count: city.mesh.index_count(),
-        triangle_count: city.mesh.triangle_count(),
-        instance_count: city.instances.len() as u32,
-        graph_name: graph.name.clone(),
-    })
+    match graph_output_kind(graph) {
+        GraphOutputKind::Smoke => {
+            let smoke = evaluate_smoke(graph)?;
+            let voxels = smoke.nx * smoke.ny * smoke.nz;
+            Ok(CookResult {
+                vertex_count: 0,
+                index_count: 0,
+                triangle_count: 0,
+                instance_count: voxels,
+                graph_name: graph.name.clone(),
+            })
+        }
+        GraphOutputKind::City => {
+            let city = evaluate_city(graph)?;
+            Ok(CookResult {
+                vertex_count: city.mesh.vertex_count(),
+                index_count: city.mesh.index_count(),
+                triangle_count: city.mesh.triangle_count(),
+                instance_count: city.instances.len() as u32,
+                graph_name: graph.name.clone(),
+            })
+        }
+    }
+}
+
+/// Evaluates a smoke graph and returns the simulated density grid.
+pub fn evaluate_smoke(graph: &Graph) -> Result<SmokeGrid, String> {
+    let root = graph
+        .nodes
+        .iter()
+        .find(|n| n.kind == NodeKind::SmokeRoot)
+        .ok_or("graph missing SmokeRoot node")?;
+
+    let values = evaluate_all(graph)?;
+    match values.get(&root.id) {
+        Some(NodeValue::Smoke(grid)) => Ok(grid.clone()),
+        Some(_) => Err("SmokeRoot did not receive smoke output".into()),
+        None => Err("SmokeRoot was not evaluated".into()),
+    }
 }
 
 /// Evaluates the graph and returns base mesh + instance transforms (no merge).
 pub fn evaluate_city_instanced(graph: &Graph) -> Result<CityInstanced, String> {
+    if graph_output_kind(graph) == GraphOutputKind::Smoke {
+        return Err("graph is smoke output, not city".into());
+    }
     let root = graph
         .nodes
         .iter()
@@ -389,7 +554,61 @@ fn evaluate_node(
                 _ => Err(format!("CityRoot input {} has unsupported type", input_id.0)),
             }
         }
+        NodeKind::SmokeDomain => {
+            let domain = node
+                .smoke_domain
+                .clone()
+                .unwrap_or_default();
+            Ok(NodeValue::SmokeDomain(domain))
+        }
+        NodeKind::SmokeSource => {
+            let domain = input_smoke_domain(inputs, cache)?;
+            let source = node.smoke_source.clone().unwrap_or_default();
+            Ok(NodeValue::SmokeConfig { domain, source })
+        }
+        NodeKind::SmokeSolver => {
+            let (domain, source) = input_smoke_config(inputs, cache)?;
+            let solver = node.smoke_solver.clone().unwrap_or_default();
+            let grid = simulate_smoke(&domain, &source, &solver);
+            Ok(NodeValue::Smoke(grid))
+        }
+        NodeKind::SmokeRoot => {
+            let input_id = inputs
+                .first()
+                .ok_or("SmokeRoot requires an input edge")?;
+            match cache.get(input_id) {
+                Some(NodeValue::Smoke(grid)) => Ok(NodeValue::Smoke(grid.clone())),
+                _ => Err(format!("SmokeRoot input {} has unsupported type", input_id.0)),
+            }
+        }
     }
+}
+
+fn input_smoke_domain(
+    inputs: &[NodeId],
+    cache: &HashMap<NodeId, NodeValue>,
+) -> Result<SmokeDomainParams, String> {
+    for id in inputs {
+        if let Some(NodeValue::SmokeDomain(d)) = cache.get(id) {
+            return Ok(*d);
+        }
+        if let Some(NodeValue::SmokeConfig { domain, .. }) = cache.get(id) {
+            return Ok(*domain);
+        }
+    }
+    Err("smoke node missing SmokeDomain input".into())
+}
+
+fn input_smoke_config(
+    inputs: &[NodeId],
+    cache: &HashMap<NodeId, NodeValue>,
+) -> Result<(SmokeDomainParams, SmokeSourceParams), String> {
+    for id in inputs {
+        if let Some(NodeValue::SmokeConfig { domain, source }) = cache.get(id) {
+            return Ok((*domain, *source));
+        }
+    }
+    Err("SmokeSolver missing SmokeSource input".into())
 }
 
 fn input_params(inputs: &[NodeId], cache: &HashMap<NodeId, NodeValue>) -> Result<BuildingParams, String> {
@@ -438,6 +657,17 @@ mod tests {
     }
 
     #[test]
+    fn smoke_preset_cooks() {
+        let graph = Graph::smoke_plume_preset();
+        let result = cook_graph(&graph).expect("cook smoke");
+        assert_eq!(result.triangle_count, 0);
+        assert!(result.instance_count > 0);
+        let grid = evaluate_smoke(&graph).expect("smoke");
+        assert!(grid.is_finite());
+        assert!(grid.max_density_value() > 0.0);
+    }
+
+    #[test]
     fn grid_graph_cooks() {
         let params_id = NodeId("params".into());
         let mesh_id = NodeId("mesh".into());
@@ -453,6 +683,9 @@ mod tests {
                     building_params: Some(BuildingParams::default()),
                     path_input: None,
                     grid_input: None,
+                    smoke_domain: None,
+                    smoke_source: None,
+                    smoke_solver: None,
                 },
                 Node {
                     id: mesh_id.clone(),
@@ -461,6 +694,9 @@ mod tests {
                     building_params: None,
                     path_input: None,
                     grid_input: None,
+                    smoke_domain: None,
+                    smoke_source: None,
+                    smoke_solver: None,
                 },
                 Node {
                     id: grid_id.clone(),
@@ -469,6 +705,9 @@ mod tests {
                     building_params: None,
                     path_input: None,
                     grid_input: Some(GridInput::default()),
+                    smoke_domain: None,
+                    smoke_source: None,
+                    smoke_solver: None,
                 },
                 Node {
                     id: root_id.clone(),
@@ -477,6 +716,9 @@ mod tests {
                     building_params: None,
                     path_input: None,
                     grid_input: None,
+                    smoke_domain: None,
+                    smoke_source: None,
+                    smoke_solver: None,
                 },
             ],
             edges: vec![

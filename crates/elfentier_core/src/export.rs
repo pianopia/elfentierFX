@@ -1,6 +1,8 @@
-//! Minimal glTF export for cooked city geometry.
+//! Minimal glTF export for cooked city geometry and Unity-oriented volume stubs.
 
 use crate::mesh::Mesh;
+use crate::smoke::SmokeGrid;
+use serde::{Deserialize, Serialize};
 use std::io::Write;
 
 /// Result of an export operation.
@@ -10,6 +12,19 @@ pub struct ExportResult {
     pub vertex_count: u32,
     pub triangle_count: u32,
     pub byte_len: usize,
+}
+
+/// Unity-oriented smoke volume export metadata.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SmokeVolumeExport {
+    pub path: String,
+    pub format: String,
+    pub nx: u32,
+    pub ny: u32,
+    pub nz: u32,
+    pub frame_count: u32,
+    pub byte_len: usize,
+    pub notes: String,
 }
 
 /// Writes a minimal binary glTF (.glb) of a merged mesh to `path`.
@@ -94,6 +109,35 @@ pub fn export_glb(mesh: &Mesh, path: &str) -> std::io::Result<ExportResult> {
     })
 }
 
+/// Writes a raw little-endian f32 density volume for Unity import.
+///
+/// Format: 16-byte header (nx, ny, nz, frame_index as u32 LE) followed by
+/// `nx*ny*nz` density samples in x-fastest order. Unity can load this into a
+/// `Texture3D` or flipbook atlas via a small import script.
+pub fn export_smoke_volume_raw(grid: &SmokeGrid, path: &str) -> std::io::Result<SmokeVolumeExport> {
+    let mut file = std::fs::File::create(path)?;
+    file.write_all(&grid.nx.to_le_bytes())?;
+    file.write_all(&grid.ny.to_le_bytes())?;
+    file.write_all(&grid.nz.to_le_bytes())?;
+    file.write_all(&0u32.to_le_bytes())?; // frame index
+    for &d in &grid.density {
+        file.write_all(&d.to_le_bytes())?;
+    }
+    let byte_len = 16 + grid.density.len() * 4;
+    Ok(SmokeVolumeExport {
+        path: path.to_string(),
+        format: "elfentier_smoke_v1".into(),
+        nx: grid.nx,
+        ny: grid.ny,
+        nz: grid.nz,
+        frame_count: 1,
+        byte_len,
+        notes: "Raw f32 density grid (x-fastest). Header: u32 nx, ny, nz, frame. \
+                Map to Texture3D or pack frames into a 2D flipbook atlas in Unity."
+            .into(),
+    })
+}
+
 fn f32_slice_to_bytes(data: &[f32]) -> Vec<u8> {
     data.iter().flat_map(|f| f.to_le_bytes()).collect()
 }
@@ -130,6 +174,7 @@ fn escape_json(s: &str) -> String {
 mod tests {
     use super::*;
     use crate::mesh::create_unit_box_mesh;
+    use crate::smoke::{simulate_smoke, SmokeDomainParams, SmokeSolverParams, SmokeSourceParams};
 
     #[test]
     fn exports_glb_file() {
@@ -141,6 +186,26 @@ mod tests {
         assert!(std::path::Path::new(&path_str).exists());
         assert_eq!(result.vertex_count, 8);
         assert!(result.byte_len > 0);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn exports_smoke_volume_raw() {
+        let grid = simulate_smoke(
+            &SmokeDomainParams::default(),
+            &SmokeSourceParams::default(),
+            &SmokeSolverParams {
+                steps: 2,
+                ..Default::default()
+            },
+        );
+        let path = std::env::temp_dir()
+            .join("elfentier_smoke_test.raw")
+            .to_string_lossy()
+            .to_string();
+        let result = export_smoke_volume_raw(&grid, &path).expect("export smoke");
+        assert_eq!(result.format, "elfentier_smoke_v1");
+        assert!(result.byte_len > 16);
         let _ = std::fs::remove_file(path);
     }
 }

@@ -3,11 +3,11 @@ import type {
   ApplyPromptResult,
   BuildingParams,
   CookResult,
-  CookWithMeshResult,
+  CookWithViewportResult,
   ExportResult,
   Graph,
   PresetInfo,
-  ViewportMesh,
+  SmokeVolumeExport,
 } from "../types/graph";
 
 /** Agent-oriented command surface — mirrors Tauri invoke handlers. */
@@ -22,17 +22,22 @@ export const agentApi = {
 
   getShopStreetPreset: () => invoke<Graph>("get_shop_street_preset"),
 
+  getSmokePlumePreset: () => invoke<Graph>("get_smoke_plume_preset"),
+
   setParams: (graph: Graph, params: BuildingParams, nodeId?: string) =>
     invoke<Graph>("set_params_command", {
       request: { graph, node_id: nodeId ?? null, params },
     }),
 
-  cook: (graph: Graph) => invoke<CookWithMeshResult>("cook", { graph }),
+  cook: (graph: Graph) => invoke<CookWithViewportResult>("cook", { graph }),
 
   cookStats: (graph: Graph) => invoke<CookResult>("cook_city_graph", { graph }),
 
   exportGltf: (graph: Graph, path: string) =>
     invoke<ExportResult>("export_gltf", { graph, path }),
+
+  exportSmokeVolume: (graph: Graph, path: string) =>
+    invoke<SmokeVolumeExport>("export_smoke_volume", { graph, path }),
 
   applyPrompt: (graph: Graph, prompt: string) =>
     invoke<ApplyPromptResult>("apply_prompt_command", {
@@ -42,4 +47,4 @@ export const agentApi = {
   explainGraph: (graph: Graph) => invoke<string>("explain_graph_command", { graph }),
 };
 
-export type { CookWithMeshResult, ViewportMesh };
+export type { CookWithViewportResult };

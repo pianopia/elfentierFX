@@ -84,13 +84,17 @@ export default function ElfNode({ data, selected }: NodeProps) {
           {nodeData.kind === "fill_grid" && "Fills lot grid with instances"}
           {nodeData.kind === "merge_instances" && "Combines instance lists"}
           {nodeData.kind === "city_root" && "Final city output"}
+          {nodeData.kind === "smoke_domain" && "Simulation volume bounds/resolution"}
+          {nodeData.kind === "smoke_source" && "Density + velocity emitter"}
+          {nodeData.kind === "smoke_solver" && "Eulerian advect/diffuse/buoyancy/pressure"}
+          {nodeData.kind === "smoke_root" && "Final smoke output"}
         </p>
       )}
 
-      {nodeData.kind !== "building_params" && (
+      {nodeData.kind !== "building_params" && nodeData.kind !== "smoke_domain" && (
         <Handle type="target" position={Position.Left} className="elf-handle" />
       )}
-      {nodeData.kind !== "city_root" && (
+      {nodeData.kind !== "city_root" && nodeData.kind !== "smoke_root" && (
         <Handle type="source" position={Position.Right} className="elf-handle" />
       )}
     </div>

@@ -25,6 +25,11 @@ pub fn list_presets() -> Vec<PresetInfo> {
             name: "Grid Block".into(),
             description: "Building mesh filling a rectangular grid of lots".into(),
         },
+        PresetInfo {
+            id: "smoke_plume".into(),
+            name: "Smoke Plume".into(),
+            description: "Eulerian smoke domain, source, and solver chain".into(),
+        },
     ]
 }
 
@@ -33,6 +38,7 @@ pub fn get_preset(id: &str) -> Option<Graph> {
     match id {
         "shop_street" => Some(Graph::shop_street_preset()),
         "grid_block" => Some(Graph::grid_block_preset()),
+        "smoke_plume" => Some(Graph::smoke_plume_preset()),
         _ => None,
     }
 }
