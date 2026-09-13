@@ -14,6 +14,7 @@ pub mod placement;
 pub mod prompt;
 pub mod smoke;
 pub mod viewport;
+pub mod volume_texture;
 
 use mesh::create_unit_box_mesh;
 use serde::{Deserialize, Serialize};

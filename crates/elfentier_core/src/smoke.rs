@@ -180,9 +180,18 @@ pub struct SmokeFrame {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SmokeVolume {
     pub frames: Vec<SmokeFrame>,
+    /// Per-frame voxel density grids (x-fastest indexing), for 3D texture export.
+    pub density_grids: Vec<Vec<f32>>,
     pub bounds_min: Vec3,
     pub bounds_max: Vec3,
     pub stats: SmokeStats,
+}
+
+impl SmokeVolume {
+    /// Returns captured density grids (empty when loaded from older snapshots).
+    pub fn density_frames(&self) -> &[Vec<f32>] {
+        &self.density_grids
+    }
 }
 
 /// Runs the Eulerian smoke solver for the given domain, sources, and params.
@@ -195,10 +204,11 @@ pub fn simulate_smoke(
     let steps = solver.steps.max(1);
     let stride = solver.frame_stride.max(1);
     let mut frames = Vec::new();
+    let mut density_grids = Vec::new();
     let mut rng = LcgRng::new(domain.seed.wrapping_add(0x5A4B_0001));
 
     emit_sources(&mut grid, sources, &mut rng);
-    push_frame(&grid, solver, &mut frames, &mut rng);
+    push_frame(&grid, solver, &mut frames, &mut density_grids, &mut rng);
 
     for step in 1..=steps {
         emit_sources(&mut grid, sources, &mut rng);
@@ -219,7 +229,7 @@ pub fn simulate_smoke(
         project_pressure(&mut grid, solver.pressure_iterations);
 
         if step % stride == 0 || step == steps {
-            push_frame(&grid, solver, &mut frames, &mut rng);
+            push_frame(&grid, solver, &mut frames, &mut density_grids, &mut rng);
         }
     }
 
@@ -246,6 +256,7 @@ pub fn simulate_smoke(
             total_density: grid.total_density(),
         },
         frames,
+        density_grids,
     }
 }
 
@@ -539,7 +550,14 @@ fn pressure_gradient(pressure: &[f32], nx: usize, ny: usize, nz: usize, i: usize
     (px * 0.5, py * 0.5, pz * 0.5)
 }
 
-fn push_frame(grid: &SmokeGrid, solver: &SmokeSolverInput, frames: &mut Vec<SmokeFrame>, rng: &mut LcgRng) {
+fn push_frame(
+    grid: &SmokeGrid,
+    solver: &SmokeSolverInput,
+    frames: &mut Vec<SmokeFrame>,
+    density_grids: &mut Vec<Vec<f32>>,
+    rng: &mut LcgRng,
+) {
+    density_grids.push(grid.density.clone());
     let max_particles = solver.max_particles_per_frame.max(64) as usize;
     let threshold = (grid.max_density() * 0.08).max(0.015);
     let vs = grid.voxel_size();
@@ -583,9 +601,11 @@ fn push_frame(grid: &SmokeGrid, solver: &SmokeSolverInput, frames: &mut Vec<Smok
     });
 }
 
-/// Exports density frames as a raw f32 atlas (Unity-friendly stub).
+/// Exports density frames as a raw f32 XY atlas (max-projected through Z per frame).
 pub fn export_density_atlas(volume: &SmokeVolume, path: &str) -> std::io::Result<SmokeExportResult> {
+    use crate::volume_texture::build_density_atlas_xy;
     use std::io::Write;
+
     let frame_count = volume.frames.len();
     if frame_count == 0 {
         return Ok(SmokeExportResult {
@@ -597,17 +617,15 @@ pub fn export_density_atlas(volume: &SmokeVolume, path: &str) -> std::io::Result
     }
 
     let res = volume.stats.resolution;
-    let slice_cells = res[0] as usize * res[1] as usize;
-    let mut atlas = Vec::with_capacity(frame_count * slice_cells);
-    for _ in 0..frame_count {
-        atlas.extend(std::iter::repeat(0.0_f32).take(slice_cells));
-    }
+    let atlas = build_density_atlas_xy(volume);
 
     let mut file = std::fs::File::create(path)?;
     writeln!(
         file,
-        "# elfentier smoke density atlas v1\n# frames={} res={}x{}\n# data=f32 little-endian row-major XY per slice, frame-major",
-        frame_count, res[0], res[1]
+        "# elfentier smoke density atlas v1\n# frames={} res={}x{}\n# data=f32 little-endian row-major XY per slice (Z max-projected), frame-major",
+        frame_count,
+        res[0],
+        res[1]
     )?;
     file.write_all(&f32_slice_to_bytes(&atlas))?;
 

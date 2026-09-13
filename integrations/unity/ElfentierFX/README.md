@@ -31,8 +31,14 @@ Attach `ElfentierLiquidPlayback` to a GameObject. Assign a material using **Part
 
 See [`docs/export-formats.md`](../../../docs/export-formats.md) in the main repository.
 
+## OpenVDB / volume playback
+
+Install the companion package **`integrations/unity/ElfentierFX.OpenVDB/`** for `volume_texture.evol` import, `ElfentierVolumePlayer`, and **ElfentierFX → Import Volume / OpenVDB…**.
+
+Smoke bundles now include a `volume_texture.evol` payload (`elfentier_volume_texture_v1`). When the OpenVDB package is present, bundle import auto-spawns a volume player.
+
 ## Limitations (Phase 1)
 
 - GLB import uses a minimal path copy; use Unity glTFast or similar for production mesh import.
-- Smoke atlas is metadata-only in this stub.
+- Native `.vdb` import requires the OpenVDB companion package converter path (see its README).
 - No live bridge to a running elfentierFX session yet.

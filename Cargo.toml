@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/elfentier_core",
     "apps/desktop/src-tauri",
+    "tools/vdb_convert",
 ]
 
 [workspace.package]
