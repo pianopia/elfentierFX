@@ -8,3 +8,4 @@ description = "Core procedural graph and mesh API for elfentierFX"
 
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }

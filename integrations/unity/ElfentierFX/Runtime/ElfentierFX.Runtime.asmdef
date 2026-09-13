@@ -1,0 +1,12 @@
+{
+  "name": "ElfentierFX.Runtime",
+  "rootNamespace": "ElfentierFX",
+  "references": [],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

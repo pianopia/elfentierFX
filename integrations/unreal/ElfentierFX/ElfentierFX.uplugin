@@ -1,0 +1,21 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.1.0",
+  "FriendlyName": "ElfentierFX",
+  "Description": "Import elfentierFX cook export bundles (GLB mesh, liquid particle cache).",
+  "Category": "Importers",
+  "CreatedBy": "elfentierFX contributors",
+  "CreatedByURL": "https://github.com/pianopia/elfentierFX",
+  "DocsURL": "https://github.com/pianopia/elfentierFX/blob/main/integrations/unreal/ElfentierFX/README.md",
+  "CanContainContent": true,
+  "IsBetaVersion": true,
+  "Installed": false,
+  "Modules": [
+    {
+      "Name": "ElfentierFX",
+      "Type": "Editor",
+      "LoadingPhase": "Default"
+    }
+  ]
+}

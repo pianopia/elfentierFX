@@ -160,3 +160,11 @@ pub fn export_liquid_cache(graph: &Graph, path: &str) -> Result<crate::liquid::L
     let volume = evaluate_liquid_volume(graph)?;
     export_particle_cache(&volume, path).map_err(|e| e.to_string())
 }
+
+/// Writes a cook export bundle directory (manifest + payloads) for engine/DCC import.
+pub fn export_cook_bundle_command(
+    graph: &Graph,
+    path: Option<&str>,
+) -> Result<crate::export::ExportBundleResult, String> {
+    crate::export::export_cook_bundle(graph, path)
+}

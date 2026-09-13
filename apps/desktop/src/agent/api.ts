@@ -10,6 +10,7 @@ import type {
   NativeViewportCamera,
   PresetInfo,
   LiquidExportResult,
+  ExportBundleResult,
   SetLiquidParamsRequest,
   SetSmokeParamsRequest,
   SmokeExportResult,
@@ -79,6 +80,11 @@ export const agentApi = {
   exportLiquidCache: (graph: Graph, path: string) =>
     invoke<LiquidExportResult>("export_liquid_cache_command", {
       request: { graph, path },
+    }),
+
+  exportCookBundle: (graph: Graph, path?: string) =>
+    invoke<ExportBundleResult>("export_cook_bundle_command_handler", {
+      request: { graph, path: path ?? null },
     }),
 
   applyPrompt: (graph: Graph, prompt: string) =>

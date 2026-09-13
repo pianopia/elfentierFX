@@ -1,0 +1,11 @@
+{
+  "name": "com.pianopia.elfentierfx",
+  "version": "0.1.0",
+  "displayName": "ElfentierFX",
+  "description": "Import elfentierFX cook export bundles (mesh, smoke atlas, liquid cache).",
+  "unity": "6000.0",
+  "documentationUrl": "https://github.com/pianopia/elfentierFX/blob/main/integrations/unity/ElfentierFX/README.md",
+  "author": {
+    "name": "elfentierFX contributors"
+  }
+}

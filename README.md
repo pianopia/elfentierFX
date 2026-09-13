@@ -23,6 +23,8 @@ Realtime mesh and smoke display use **native OS graphics only** via `wgpu`, not 
 apps/desktop/          Tauri 2 desktop app (Rust host + React frontend)
 crates/elfentier_core/ Shared procedural core (building, fluids, graph cook, export)
 docs/agent-api.md      JSON command surface for agents
+docs/export-formats.md Cook export bundle + payload format reference
+integrations/          Unity, Unreal, Blender import stubs (Phase 1)
 ```
 
 ## Alpha 2 + Fluids Phase 1
@@ -33,9 +35,11 @@ Building → city workflow plus smoke/gas:
 - **Native wgpu preview** — instanced mesh + smoke particle billboards rendered offscreen; `render_native_viewport_command` for orbit/animation frames
 - **Instanced cook** — `cook` returns mesh buffers + optional native preview image
 - **Prompt bar** — local JP/EN interpreter (`商店街`, `煙`, `もっと煙`, `階数を5に`, …)
-- **Agent API** — see [docs/agent-api.md](docs/agent-api.md)
+- **FLIP liquids (Phase 1)** — ocean / waterfall / flood presets; particle cache export
+- **Export bundles** — manifest + payloads for Unity, Unreal, Blender (`Export Bundle` in UI)
+- **Agent API** — see [docs/agent-api.md](docs/agent-api.md) and [docs/export-formats.md](docs/export-formats.md)
 
-OpenVDB I/O and FLIP liquids remain on the roadmap (Phase 2).
+OpenVDB dense volume I/O remains on the roadmap.
 
 ## Prerequisites
 
@@ -55,7 +59,7 @@ cargo tauri dev --manifest-path src-tauri/Cargo.toml
 
 1. **Shop → Street** or **煙 · Smoke puff** preset
 2. **Cook** — native wgpu preview (drag canvas to orbit; smoke animates at sim fps)
-3. **Export glTF** / **Export smoke** as appropriate
+3. **Export glTF** / **Export smoke** / **Export liquid** / **Export Bundle** as appropriate
 
 ## Workspace commands
 

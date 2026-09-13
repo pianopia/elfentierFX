@@ -24,6 +24,7 @@ JSON-serializable Tauri commands for external agents and the desktop UI. All com
 | `export_gltf` | `{ graph, path }` | `ExportResult` | Export merged city `.glb` |
 | `export_smoke_density_command` | `{ request: { graph, path } }` | `SmokeExportResult` | Export smoke density atlas stub |
 | `export_liquid_cache_command` | `{ request: { graph, path } }` | `LiquidExportResult` | Export liquid particle cache stub |
+| `export_cook_bundle_command_handler` | `{ request: { graph, path? } }` | `ExportBundleResult` | Write manifest + payloads directory (temp path if `path` omitted) |
 | `apply_prompt_command` | `{ request: { graph, prompt } }` | `ApplyPromptResult` | Local NL → graph edits |
 | `explain_graph_command` | `{ graph }` | `string` | Template graph summary |
 
@@ -227,7 +228,50 @@ Unity-oriented stub: per-frame particle positions and radii.
 }
 ```
 
-Format: text header (`# elfentier liquid particle cache v1`) followed by little-endian `f32` tuples `[x, y, z, radius]` per particle, frame-major. Import as point cache or mesh via Unity VFX Graph / custom importer.
+Format: text header (`# elfentier liquid particle cache v1`) followed by little-endian `f32` tuples `[x, y, z, radius]` per particle, frame-major. Import via Unity/Unreal/Blender integrations under `integrations/`.
+
+## Cook export bundle (`export_cook_bundle_command_handler`)
+
+Writes a bundle directory with unified manifest for engine/DCC import. See [`export-formats.md`](export-formats.md).
+
+```json
+{
+  "directory": "/tmp/elfentier_export_ocean_patch_1726217280",
+  "manifest_path": "/tmp/elfentier_export_ocean_patch_1726217280/manifest.json",
+  "payload_count": 2,
+  "payloads": [
+    { "format": "elfentier_graph_v1", "path": "graph.json", "byte_len": 2048 },
+    {
+      "format": "elfentier_liquid_cache_v1",
+      "path": "liquid_cache.raw",
+      "frame_count": 20,
+      "byte_len": 384000,
+      "bounds_min": [-8.0, 0.0, -8.0],
+      "bounds_max": [8.0, 3.5, 8.0],
+      "resolution": [22, 22, 22]
+    }
+  ]
+}
+```
+
+Manifest (`elfentier_export_manifest_v1`) fields:
+
+| Field | Value |
+|-------|-------|
+| `units` | `meters` |
+| `up_axis` | `Y` |
+| `frame_rate` | `12.0` (fluid playback) |
+| `graph_mode` | `city`, `smoke`, or `liquid` |
+
+Payload files by mode:
+
+| Mode | Primary payload |
+|------|-----------------|
+| city | `city_mesh.glb` (`gltf_glb`) |
+| smoke | `smoke_density.raw` (`elfentier_smoke_atlas_v1`) |
+| liquid | `liquid_cache.raw` (`elfentier_liquid_cache_v1`) |
+
+Integrations: `integrations/unity/ElfentierFX/`, `integrations/unreal/ElfentierFX/`, `integrations/blender/elfentier_fx/`.
 
 ## Prompt interpreter (`apply_prompt_command`)
 
@@ -265,7 +309,15 @@ Response shape:
 
 1. **Graph is source of truth** — prompts only mutate the graph JSON.
 2. **Cook is deterministic** — same graph + seed always yields the same simulation.
-3. Agents should call `apply_prompt_command` → `cook` → optionally `export_gltf`, `export_smoke_density_command`, or `export_liquid_cache_command`.
+3. Agents should call `apply_prompt_command` → `cook` → `export_cook_bundle_command_handler` (preferred) or individual export commands.
+
+## Integrations (Phase 1)
+
+| Target | Path |
+|--------|------|
+| Unity 6 | `integrations/unity/ElfentierFX/` |
+| Unreal Engine | `integrations/unreal/ElfentierFX/` |
+| Blender 4.x | `integrations/blender/elfentier_fx/` |
 
 ## Future
 

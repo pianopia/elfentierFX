@@ -1,7 +1,27 @@
-//! Minimal glTF export for cooked city geometry.
+//! glTF export and cook-session bundle packaging for engine/DCC handoff.
 
+use crate::core_version;
+use crate::graph::{
+    cook_and_export, evaluate_liquid_volume, evaluate_smoke_volume, graph_mode, Graph, GraphMode,
+};
+use crate::liquid::export_particle_cache;
 use crate::mesh::Mesh;
+use crate::smoke::export_density_atlas;
+use serde::{Deserialize, Serialize};
 use std::io::Write;
+use std::path::{Path, PathBuf};
+
+/// Manifest format identifier written to `manifest.json` in export bundles.
+pub const EXPORT_MANIFEST_FORMAT: &str = "elfentier_export_manifest_v1";
+
+/// Default playback frame rate for fluid payloads (matches viewport preview).
+pub const EXPORT_FRAME_RATE: f32 = 12.0;
+
+/// Linear unit convention for all spatial data in export bundles.
+pub const EXPORT_UNITS: &str = "meters";
+
+/// Up-axis convention for all spatial data in export bundles.
+pub const EXPORT_UP_AXIS: &str = "Y";
 
 /// Result of an export operation.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -126,9 +146,219 @@ fn escape_json(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+/// One payload entry referenced by an export manifest.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExportPayloadEntry {
+    pub format: String,
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frame_count: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub byte_len: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vertex_count: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub triangle_count: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bounds_min: Option<[f32; 3]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bounds_max: Option<[f32; 3]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<[u32; 3]>,
+}
+
+/// Unified manifest describing a cooked export bundle directory.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExportManifest {
+    pub format: String,
+    pub version: u32,
+    pub core_version: String,
+    pub created_at: String,
+    pub graph_name: String,
+    pub graph_mode: String,
+    pub units: String,
+    pub up_axis: String,
+    pub frame_rate: f32,
+    pub payloads: Vec<ExportPayloadEntry>,
+}
+
+/// Result of writing a cook export bundle directory.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExportBundleResult {
+    pub directory: String,
+    pub manifest_path: String,
+    pub payload_count: usize,
+    pub payloads: Vec<ExportPayloadEntry>,
+}
+
+/// Creates a bundle directory under the system temp folder when `path` is None.
+pub fn default_bundle_directory(graph_name: &str) -> std::io::Result<PathBuf> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let slug = sanitize_dir_name(graph_name);
+    let dir = std::env::temp_dir().join(format!("elfentier_export_{slug}_{stamp}"));
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
+/// Writes a cook export bundle (manifest + payloads) for the given graph.
+pub fn export_cook_bundle(graph: &Graph, path: Option<&str>) -> Result<ExportBundleResult, String> {
+    let dir = match path {
+        Some(p) => {
+            let dir = PathBuf::from(p);
+            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+            dir
+        }
+        None => default_bundle_directory(&graph.name).map_err(|e| e.to_string())?,
+    };
+
+    let graph_path = dir.join("graph.json");
+    let graph_json = serde_json::to_string_pretty(graph).map_err(|e| e.to_string())?;
+    std::fs::write(&graph_path, &graph_json).map_err(|e| e.to_string())?;
+
+    let mut payloads = vec![ExportPayloadEntry {
+        format: "elfentier_graph_v1".into(),
+        path: "graph.json".into(),
+        frame_count: None,
+        byte_len: Some(graph_json.len()),
+        vertex_count: None,
+        triangle_count: None,
+        bounds_min: None,
+        bounds_max: None,
+        resolution: None,
+    }];
+
+    match graph_mode(graph) {
+        GraphMode::City => {
+            let mesh_path = dir.join("city_mesh.glb");
+            let mesh_path_str = mesh_path.to_string_lossy().to_string();
+            let mesh_result = cook_and_export(graph, &mesh_path_str)?;
+            payloads.push(ExportPayloadEntry {
+                format: "gltf_glb".into(),
+                path: "city_mesh.glb".into(),
+                frame_count: None,
+                byte_len: Some(mesh_result.byte_len),
+                vertex_count: Some(mesh_result.vertex_count),
+                triangle_count: Some(mesh_result.triangle_count),
+                bounds_min: None,
+                bounds_max: None,
+                resolution: None,
+            });
+        }
+        GraphMode::Smoke => {
+            let volume = evaluate_smoke_volume(graph)?;
+            let smoke_path = dir.join("smoke_density.raw");
+            let smoke_path_str = smoke_path.to_string_lossy().to_string();
+            let smoke_result =
+                export_density_atlas(&volume, &smoke_path_str).map_err(|e| e.to_string())?;
+            payloads.push(ExportPayloadEntry {
+                format: smoke_result.format.clone(),
+                path: "smoke_density.raw".into(),
+                frame_count: Some(smoke_result.frame_count),
+                byte_len: Some(smoke_result.byte_len),
+                vertex_count: None,
+                triangle_count: None,
+                bounds_min: Some(vec3_to_array(volume.bounds_min)),
+                bounds_max: Some(vec3_to_array(volume.bounds_max)),
+                resolution: Some(volume.stats.resolution),
+            });
+        }
+        GraphMode::Liquid => {
+            let volume = evaluate_liquid_volume(graph)?;
+            let liquid_path = dir.join("liquid_cache.raw");
+            let liquid_path_str = liquid_path.to_string_lossy().to_string();
+            let liquid_result =
+                export_particle_cache(&volume, &liquid_path_str).map_err(|e| e.to_string())?;
+            payloads.push(ExportPayloadEntry {
+                format: liquid_result.format.clone(),
+                path: "liquid_cache.raw".into(),
+                frame_count: Some(liquid_result.frame_count),
+                byte_len: Some(liquid_result.byte_len),
+                vertex_count: None,
+                triangle_count: None,
+                bounds_min: Some(vec3_to_array(volume.bounds_min)),
+                bounds_max: Some(vec3_to_array(volume.bounds_max)),
+                resolution: Some(volume.stats.resolution),
+            });
+        }
+    }
+
+    let manifest = ExportManifest {
+        format: EXPORT_MANIFEST_FORMAT.into(),
+        version: 1,
+        core_version: core_version().into(),
+        created_at: iso8601_now(),
+        graph_name: graph.name.clone(),
+        graph_mode: graph_mode_label(graph_mode(graph)).into(),
+        units: EXPORT_UNITS.into(),
+        up_axis: EXPORT_UP_AXIS.into(),
+        frame_rate: EXPORT_FRAME_RATE,
+        payloads: payloads.clone(),
+    };
+
+    let manifest_path = dir.join("manifest.json");
+    let manifest_json = serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?;
+    std::fs::write(&manifest_path, &manifest_json).map_err(|e| e.to_string())?;
+
+    Ok(ExportBundleResult {
+        directory: dir.to_string_lossy().to_string(),
+        manifest_path: manifest_path.to_string_lossy().to_string(),
+        payload_count: payloads.len(),
+        payloads,
+    })
+}
+
+fn vec3_to_array(v: crate::mesh::Vec3) -> [f32; 3] {
+    [v.x, v.y, v.z]
+}
+
+fn graph_mode_label(mode: GraphMode) -> &'static str {
+    match mode {
+        GraphMode::City => "city",
+        GraphMode::Smoke => "smoke",
+        GraphMode::Liquid => "liquid",
+    }
+}
+
+fn sanitize_dir_name(name: &str) -> String {
+    let slug: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let trimmed = slug.trim_matches('_');
+    if trimmed.is_empty() {
+        "cook".into()
+    } else {
+        trimmed.chars().take(48).collect()
+    }
+}
+
+fn iso8601_now() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    format!("{secs}")
+}
+
+/// Reads and parses a bundle manifest from disk (for tests and integrations).
+pub fn read_export_manifest(path: &Path) -> Result<ExportManifest, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&text).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::graph::Graph;
     use crate::mesh::create_unit_box_mesh;
 
     #[test]
@@ -142,5 +372,55 @@ mod tests {
         assert_eq!(result.vertex_count, 8);
         assert!(result.byte_len > 0);
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn city_bundle_writes_manifest_and_glb() {
+        let graph = Graph::shop_street_preset();
+        let dir = std::env::temp_dir().join("elfentier_test_city_bundle");
+        let _ = std::fs::remove_dir_all(&dir);
+        let result = export_cook_bundle(&graph, Some(dir.to_str().unwrap())).expect("bundle");
+        assert_eq!(result.payload_count, 2);
+        assert!(Path::new(&result.manifest_path).exists());
+        let manifest = read_export_manifest(Path::new(&result.manifest_path)).expect("manifest");
+        assert_eq!(manifest.format, EXPORT_MANIFEST_FORMAT);
+        assert_eq!(manifest.units, EXPORT_UNITS);
+        assert_eq!(manifest.up_axis, EXPORT_UP_AXIS);
+        assert_eq!(manifest.frame_rate, EXPORT_FRAME_RATE);
+        assert_eq!(manifest.graph_mode, "city");
+        assert!(dir.join("city_mesh.glb").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn smoke_bundle_writes_smoke_atlas_payload() {
+        let graph = Graph::smoke_puff_preset();
+        let dir = std::env::temp_dir().join("elfentier_test_smoke_bundle");
+        let _ = std::fs::remove_dir_all(&dir);
+        let result = export_cook_bundle(&graph, Some(dir.to_str().unwrap())).expect("bundle");
+        let manifest = read_export_manifest(Path::new(&result.manifest_path)).expect("manifest");
+        assert_eq!(manifest.graph_mode, "smoke");
+        assert!(manifest
+            .payloads
+            .iter()
+            .any(|p| p.format == "elfentier_smoke_atlas_v1"));
+        assert!(dir.join("smoke_density.raw").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn liquid_bundle_writes_liquid_cache_payload() {
+        let graph = Graph::ocean_patch_preset();
+        let dir = std::env::temp_dir().join("elfentier_test_liquid_bundle");
+        let _ = std::fs::remove_dir_all(&dir);
+        let result = export_cook_bundle(&graph, Some(dir.to_str().unwrap())).expect("bundle");
+        let manifest = read_export_manifest(Path::new(&result.manifest_path)).expect("manifest");
+        assert_eq!(manifest.graph_mode, "liquid");
+        assert!(manifest
+            .payloads
+            .iter()
+            .any(|p| p.format == "elfentier_liquid_cache_v1"));
+        assert!(dir.join("liquid_cache.raw").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
