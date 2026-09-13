@@ -24,8 +24,8 @@ apps/desktop/          Tauri 2 desktop app (Rust host + React frontend)
 crates/elfentier_core/ Shared procedural core (building, fluids, graph cook, export)
 docs/agent-api.md      JSON command surface for agents
 docs/export-formats.md Cook export bundle + payload format reference
-integrations/          Unity, Unreal, Blender import packages (+ Unity OpenVDB volume)
-tools/vdb_convert/     Phase 1 CLI bridge to Unity volume textures (.evol)
+integrations/          Unity, Unreal, Blender import packages
+tools/vdb_convert/     CLI bridge for elfentier_volume_texture_v1 (.evol) interchange
 ```
 
 ## Alpha 2 + Fluids Phase 1
@@ -40,7 +40,7 @@ Building → city workflow plus smoke/gas:
 - **Export bundles** — manifest + payloads for Unity, Unreal, Blender (`Export Bundle` in UI)
 - **Agent API** — see [docs/agent-api.md](docs/agent-api.md) and [docs/export-formats.md](docs/export-formats.md)
 
-OpenVDB dense volume I/O remains on the roadmap.
+Dense volume interchange uses `elfentier_volume_texture_v1` (`.evol`). Unity users install **[Unity Volume Importer](https://github.com/pianopia/UnityVolumeImporter)** (`com.louddin.unity-volume-importer`) for in-editor volume import; native `.vdb` read remains on the elfentierFX roadmap.
 
 ## Prerequisites
 

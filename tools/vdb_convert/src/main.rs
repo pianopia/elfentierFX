@@ -121,8 +121,8 @@ fn print_usage() {
            vdb_convert from-vdb <file.vdb> <out.evol>   (stub — not yet implemented)\n\
          \n\
          Format: {format}\n\
-         Unity: install integrations/unity/ElfentierFX.OpenVDB and import via\n\
-                ElfentierFX → Import Volume / OpenVDB…",
+         Unity: install Unity Volume Importer (com.louddin.unity-volume-importer)\n\
+                from https://github.com/pianopia/UnityVolumeImporter to import .evol",
         format = VOLUME_TEXTURE_FORMAT
     );
 }
