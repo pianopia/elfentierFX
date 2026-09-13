@@ -23,3 +23,6 @@ wgpu = "24"
 pollster = "0.4"
 bytemuck = { version = "1", features = ["derive"] }
 base64 = "0.22"
+
+[dev-dependencies]
+png = "0.17"

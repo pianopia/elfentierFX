@@ -849,6 +849,7 @@ dependencies = [
  "base64 0.22.1",
  "bytemuck",
  "elfentier_core",
+ "png 0.17.16",
  "pollster",
  "serde",
  "serde_json",
