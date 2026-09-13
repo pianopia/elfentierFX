@@ -1,7 +1,7 @@
 //! GPU-friendly 3D volume texture export for Unity and other engines.
 //!
-//! Phase 1 writes `elfentier_volume_texture_v1` (`.evol` files). Native OpenVDB
-//! `.vdb` import is planned for a later phase; use `tools/vdb_convert` as a bridge.
+//! Phase 1 writes `elfentier_volume_texture_v1` (`.evol` files). OpenVDB fog
+//! `.vdb` I/O lives in `openvdb_io`; use `tools/vdb_convert` to bridge formats.
 
 use crate::smoke::SmokeVolume;
 use serde::{Deserialize, Serialize};

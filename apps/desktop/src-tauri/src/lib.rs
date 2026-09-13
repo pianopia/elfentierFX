@@ -2,7 +2,8 @@ mod wgpu_viewport;
 
 use elfentier_core::{
     agent::{
-        export_cook_bundle_command, export_liquid_cache, export_smoke_density, get_preset,
+        export_cook_bundle_command, export_liquid_cache, export_smoke_density, export_smoke_vdb,
+        get_preset,
         list_presets, set_liquid_params, set_params, set_smoke_params, PresetInfo,
         SetLiquidParamsRequest, SetSmokeParamsRequest,
     },
@@ -13,6 +14,7 @@ use elfentier_core::{
     graph::{cook_and_export, cook_graph, Graph},
     prompt::{apply_prompt, ApplyPromptResult},
     liquid::LiquidExportResult,
+    openvdb_io::OpenVdbExportResult,
     smoke::SmokeExportResult,
     viewport::{cook_viewport_mesh, ViewportMesh},
     MeshStats,
@@ -242,6 +244,11 @@ fn export_smoke_density_command(request: ExportSmokeRequest) -> Result<SmokeExpo
 }
 
 #[tauri::command]
+fn export_smoke_vdb_command(request: ExportSmokeRequest) -> Result<OpenVdbExportResult, String> {
+    export_smoke_vdb(&request.graph, &request.path)
+}
+
+#[tauri::command]
 fn export_liquid_cache_command(request: ExportLiquidRequest) -> Result<LiquidExportResult, String> {
     export_liquid_cache(&request.graph, &request.path)
 }
@@ -291,6 +298,7 @@ pub fn run() {
             export_city_graph,
             export_gltf,
             export_smoke_density_command,
+            export_smoke_vdb_command,
             export_liquid_cache_command,
             export_cook_bundle_command_handler,
             apply_prompt_command,

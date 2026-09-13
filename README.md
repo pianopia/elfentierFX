@@ -10,7 +10,7 @@ Unity-oriented procedural DCC for game-ready advanced looks — node-based model
 |-------|------------|
 | UI shell | Tauri 2 + React / Vite (React Flow node editor) |
 | 3D viewport | **Native Rust `wgpu` only** — offscreen renderer (Vulkan/Metal/DX12) → canvas preview |
-| Core | Rust crate (`elfentier_core`); C++/OpenVDB via FFI later |
+| Core | Rust crate (`elfentier_core`); OpenVDB fog I/O via pure-Rust writer + `vdb-rs` reader |
 | Platforms | macOS, Windows, Linux |
 
 ### Viewport architecture
@@ -25,7 +25,7 @@ crates/elfentier_core/ Shared procedural core (building, fluids, graph cook, exp
 docs/agent-api.md      JSON command surface for agents
 docs/export-formats.md Cook export bundle + payload format reference
 integrations/          Unity, Unreal, Blender import packages
-tools/vdb_convert/     CLI bridge for elfentier_volume_texture_v1 (.evol) interchange
+tools/vdb_convert/     CLI for .evol interchange and OpenVDB fog .vdb I/O
 ```
 
 ## Alpha 2 + Fluids Phase 1
@@ -40,7 +40,9 @@ Building → city workflow plus smoke/gas:
 - **Export bundles** — manifest + payloads for Unity, Unreal, Blender (`Export Bundle` in UI)
 - **Agent API** — see [docs/agent-api.md](docs/agent-api.md) and [docs/export-formats.md](docs/export-formats.md)
 
-Dense volume interchange uses `elfentier_volume_texture_v1` (`.evol`). Unity users install **[Unity Volume Importer](https://github.com/pianopia/UnityVolumeImporter)** (`com.louddin.unity-volume-importer`) for in-editor volume import; native `.vdb` read remains on the elfentierFX roadmap.
+**Alpha 2 (OpenVDB I/O spike):** smoke graphs export an optional `smoke_density.vdb` fog FloatGrid (last frame) alongside `.evol` / atlas payloads. Reading uses `vdb-rs`; writing is a pure-Rust minimal encoder (uncompressed active-mask). Open `.vdb` in Houdini, Blender, or other OpenVDB tools. Unity users install **[Unity Volume Importer](https://github.com/pianopia/UnityVolumeImporter)** (`com.louddin.unity-volume-importer`) for legacy `.evol` in-editor import — native `.vdb` there remains on that product's roadmap.
+
+OpenVDB is a trademark of LF Projects, LLC.
 
 ## Prerequisites
 
@@ -67,6 +69,7 @@ cargo tauri dev --manifest-path src-tauri/Cargo.toml
 ```bash
 cargo check --workspace
 cargo test -p elfentier_core
+cargo test -p vdb_convert
 cargo test -p elfentierfx-desktop
 cd apps/desktop && npm run typecheck
 ```

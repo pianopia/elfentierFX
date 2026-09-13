@@ -3,6 +3,7 @@
 use crate::building::BuildingParams;
 use crate::graph::{evaluate_liquid_volume, evaluate_smoke_volume, graph_mode, Graph, GraphMode, NodeKind};
 use crate::liquid::{export_particle_cache, LiquidDomainInput, LiquidSolverInput, LiquidSourceInput};
+use crate::openvdb_io::{export_openvdb_fog, OpenVdbExportResult};
 use crate::smoke::{export_density_atlas, SmokeDomainInput, SmokeSolverInput, SmokeSourceInput};
 use serde::{Deserialize, Serialize};
 
@@ -143,13 +144,22 @@ pub fn set_liquid_params(request: &SetLiquidParamsRequest) -> Graph {
     g
 }
 
-/// Exports a smoke density atlas stub for Unity/game-engine handoff.
+/// Exports a smoke density atlas for flipbook / engine handoff.
 pub fn export_smoke_density(graph: &Graph, path: &str) -> Result<crate::smoke::SmokeExportResult, String> {
     if graph_mode(graph) != GraphMode::Smoke {
         return Err("graph is not a smoke graph (missing SmokeRoot)".into());
     }
     let volume = evaluate_smoke_volume(graph)?;
     export_density_atlas(&volume, path).map_err(|e| e.to_string())
+}
+
+/// Exports the latest smoke density frame as an OpenVDB fog FloatGrid (`.vdb`).
+pub fn export_smoke_vdb(graph: &Graph, path: &str) -> Result<OpenVdbExportResult, String> {
+    if graph_mode(graph) != GraphMode::Smoke {
+        return Err("graph is not a smoke graph (missing SmokeRoot)".into());
+    }
+    let volume = evaluate_smoke_volume(graph)?;
+    export_openvdb_fog(&volume, path).map_err(|e| e.to_string())
 }
 
 /// Exports a liquid particle cache stub for Unity/game-engine handoff.

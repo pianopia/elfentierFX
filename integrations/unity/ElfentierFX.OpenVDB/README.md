@@ -13,7 +13,7 @@ For **3D volume playback** in Unity — including legacy `volume_texture.evol` (
 
 ## elfentierFX interchange formats (unchanged)
 
-- **Export bundles** — smoke graphs include `volume_texture.evol` alongside the XY atlas. Import the bundle with **ElfentierFX → Import Export Bundle…** (`integrations/unity/ElfentierFX/`).
-- **CLI** — `tools/vdb_convert` reads and writes `.evol` for engine interchange.
+- **Export bundles** — smoke graphs include `volume_texture.evol`, `smoke_density.vdb` (OpenVDB fog), and the XY atlas. Import the bundle with **ElfentierFX → Import Export Bundle…** (`integrations/unity/ElfentierFX/`).
+- **CLI** — `tools/vdb_convert` converts between `.evol` and `.vdb` where supported.
 
 OpenVDB is a trademark of LF Projects, LLC.

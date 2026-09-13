@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Phase 1 bridge: convert elfentier smoke/liquid exports to Unity volume textures"
+description = "Alpha 2 volume CLI: .evol interchange and OpenVDB fog .vdb I/O"
 
 [[bin]]
 name = "vdb_convert"
