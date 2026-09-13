@@ -1,8 +1,8 @@
-# elfentierX
+# elfentierFX
 
 Procedural DCC aimed at **Unity / game-ready advanced looks** — node-based modeling, volumes (OpenVDB), fluids, and bake/export — with a much lower learning curve than traditional FX tools.
 
-> Working name / product vision. Not affiliated with SideFX Houdini.
+> Working name / product vision. **FX** = effects (fluids, volumes, VFX). Not affiliated with SideFX Houdini / Houdini FX.
 
 ## Stack (decided)
 
@@ -17,7 +17,7 @@ Design / scaffolding. Building → city procedural flow is the planned **Alpha 1
 
 ## Related
 
-`pianopia/Elfentier` already occupied the bare name. This repo is **elfentierX**.
+`pianopia/Elfentier` already occupied the bare name. This repo is **elfentierFX**.
 
 ## License
 
