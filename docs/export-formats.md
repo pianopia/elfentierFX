@@ -90,7 +90,7 @@ Text header followed by little-endian `f32` density samples:
 
 ```
 # elfentier smoke density atlas v1
-# frames=13 res=24x24
+# frames=13 res=48x48
 # data=f32 little-endian row-major XY per slice, frame-major
 ```
 

@@ -16,7 +16,9 @@ pub struct SmokeDomainInput {
 impl Default for SmokeDomainInput {
     fn default() -> Self {
         Self {
-            resolution: 24,
+            // Phase A film-path: 48³ (~110k cells) vs legacy 24³ (~14k).
+            // 8× more voxels → smoother density for raymarch; sim cost scales O(n³).
+            resolution: 48,
             bounds_min: Vec3::new(-4.0, 0.0, -4.0),
             bounds_max: Vec3::new(4.0, 8.0, 4.0),
             seed: 7,
@@ -770,7 +772,7 @@ mod tests {
         let domain = SmokeDomainInput::default();
         let grid = create_grid(&domain);
         assert!(!grid.has_nan());
-        assert_eq!(grid.cell_count(), 24 * 24 * 24);
+        assert_eq!(grid.cell_count(), 48 * 48 * 48);
     }
 
     #[test]

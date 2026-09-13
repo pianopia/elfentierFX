@@ -33,7 +33,18 @@ tools/vdb_convert/     CLI for .evol interchange and OpenVDB fog .vdb I/O
 Building → city workflow plus smoke/gas:
 
 - **Smoke / gas (Phase 1)** — Eulerian solver in `elfentier_core` (`SmokeDomain` → `SmokeSource` → `SmokeSolver` → `SmokeRoot`); animated soft particle impostors from density; **煙 · Smoke puff** preset
-- **Native wgpu preview** — instanced mesh + smoke particle billboards rendered offscreen; `render_native_viewport_command` for orbit/animation frames
+- **Native wgpu preview** — instanced mesh + liquid/smoke rendering offscreen; `render_native_viewport_command` for orbit/animation frames
+
+### Film path — Phase A (smoke volume raymarch)
+
+Foundation for cinematic lookdev-quality smoke previews (not final hero-shot path tracing):
+
+- **Higher-res Eulerian density** — smoke presets default to **48³** (~110k cells, 8× legacy 24³). Tradeoff: sim cost scales O(n³); cook time rises but density is substantially smoother for volume rendering.
+- **GPU volume raymarch** — replaces screen-space splat/MIP preview. Full-screen wgpu pass with trilinear density sampling, Beer-Lambert absorption, and simple single-scatter + ambient phase. Soft continuous silhouettes — no visible splat disks.
+- **Light direction / temperature tint** — optional warm/cool tint from solver temperature metadata.
+- **Visual QA** — tests reject splat-disk dot-matrix patterns (Laplacian high-frequency energy + similar-radius blob count) while keeping slab-rejection heuristics.
+
+**Next (out of scope Phase A):** NanoVDB sparse LOD, multi-scattering, path-traced volumes, pyroclastic noise fields. Hooks remain via `.vdb` / `.evol` export.
 - **Instanced cook** — `cook` returns mesh buffers + optional native preview image
 - **Prompt bar** — local JP/EN interpreter (`商店街`, `煙`, `もっと煙`, `階数を5に`, …)
 - **FLIP liquids (Phase 1)** — ocean / waterfall / flood presets; particle cache export
