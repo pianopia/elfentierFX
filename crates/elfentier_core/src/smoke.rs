@@ -645,10 +645,10 @@ fn push_frame(
     rng: &mut LcgRng,
 ) {
     density_grids.push(grid.density.clone());
-    let max_particles = solver.max_particles_per_frame.max(64) as usize;
-    let threshold = (grid.max_density() * 0.08).max(0.015);
+    let max_particles = solver.max_particles_per_frame.max(128) as usize;
+    let threshold = (grid.max_density() * 0.025).max(0.006);
     let vs = grid.voxel_size();
-    let base_size = vs.x.max(vs.y).max(vs.z) * 1.35;
+    let base_size = vs.x.max(vs.y).max(vs.z) * 1.65;
 
     let mut candidates: Vec<(usize, f32)> = grid
         .density
@@ -675,9 +675,9 @@ fn push_frame(
         world.y += (rng.next_f32() - 0.5) * vs.y * 0.6;
         world.z += (rng.next_f32() - 0.5) * vs.z * 0.6;
         positions.extend([world.x, world.y, world.z]);
-        let norm = (density / grid.max_density().max(0.01)).clamp(0.05, 1.0);
-        sizes.push(base_size * (0.55 + norm * 0.85));
-        opacities.push(norm);
+        let norm = (density / grid.max_density().max(0.01)).clamp(0.08, 1.0);
+        sizes.push(base_size * (0.72 + norm * 0.95));
+        opacities.push((0.32 + norm.powf(0.8) * 0.68).clamp(0.28, 1.0));
     }
 
     frames.push(SmokeFrame {

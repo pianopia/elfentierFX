@@ -83,33 +83,42 @@ fn vs_main(particle: Particle, @builtin(vertex_index) vid: u32) -> VsOut {
         vec2f(-1.0,  1.0),
     );
     let uv = corners[vid];
-    let to_particle = particle.center - camera.eye.xyz;
-    let dist = length(to_particle);
+    let to_eye = camera.eye.xyz - particle.center;
+    let forward = to_eye / max(length(to_eye), 0.2);
     let world_up = vec3f(0.0, 1.0, 0.0);
-    var right = normalize(cross(world_up, normalize(to_particle)));
+    var right = normalize(cross(world_up, forward));
     if (length(right) < 0.001) {
         right = vec3f(1.0, 0.0, 0.0);
     }
-    let up = cross(normalize(to_particle), right);
-    let radius = particle.size * (0.65 + 0.35 * particle.opacity);
+    let up = cross(forward, right);
+    // Screen-stable puff radius in world units.
+    let puff_scale = 0.82 + 0.38 * particle.opacity;
+    let radius = particle.size * puff_scale;
     let offset = right * uv.x * radius + up * uv.y * radius;
     let world = particle.center + offset;
     var out: VsOut;
     out.clip = camera.view_proj * vec4f(world, 1.0);
     out.uv = uv;
-    out.opacity = particle.opacity * 0.42;
+    out.opacity = clamp(particle.opacity, 0.15, 1.0);
     return out;
 }
 
 @fragment
 fn fs_main(input: VsOut) -> @location(0) vec4f {
     let r = length(input.uv);
-    if (r > 1.0) {
+    if (r > 1.12) {
         discard;
     }
-    let falloff = pow(1.0 - r, 2.0);
-    let col = vec3f(0.92, 0.94, 0.98);
-    return vec4f(col, input.opacity * falloff * 0.32);
+    // Soft volumetric puff: bright core + wide halo for readable plume silhouettes.
+    let edge = smoothstep(1.12, 0.72, r);
+    let core = exp(-r * r * 4.2);
+    let halo = exp(-r * r * 1.1) * 0.38;
+    let falloff = (core + halo) * edge;
+    let warm = vec3f(0.96, 0.94, 0.90);
+    let dense = vec3f(0.78, 0.76, 0.72);
+    let col = mix(warm, dense, input.opacity * 0.65);
+    let alpha = input.opacity * falloff * 0.52;
+    return vec4f(col, alpha);
 }
 "#;
 
@@ -193,7 +202,7 @@ fn vs_main(input: VsIn) -> @builtin(position) vec4f {
 
 @fragment
 fn fs_main() -> @location(0) vec4f {
-    return vec4f(0.95, 0.62, 0.22, 1.0);
+    return vec4f(0.95, 0.62, 0.22, 0.72);
 }
 "#;
 
@@ -215,7 +224,7 @@ fn vs_main(input: VsIn) -> @builtin(position) vec4f {
 
 @fragment
 fn fs_main() -> @location(0) vec4f {
-    return vec4f(0.42, 0.46, 0.54, 1.0);
+    return vec4f(0.28, 0.31, 0.36, 0.55);
 }
 "#;
 
@@ -310,6 +319,9 @@ const PREVIEW_MIN_LUMA_STDDEV: f32 = 8.0;
 const PREVIEW_MIN_CONTRAST_PIXEL_PCT: f32 = 0.5;
 const PREVIEW_MIN_UNIQUE_COLORS: usize = 32;
 const PREVIEW_CONTRAST_DELTA_THRESHOLD: u8 = 16;
+const PREVIEW_MIN_SMOKE_LUMA: f32 = 95.0;
+const PREVIEW_MIN_SMOKE_CENTER_PCT: f32 = 1.5;
+const PREVIEW_MIN_SMOKE_BRIGHT_PCT: f32 = 0.35;
 
 pub fn preview_contrast_metrics(rgba: &[u8], clear: [u8; 4]) -> PreviewContrastMetrics {
     let pixel_count = rgba.len() / 4;
@@ -364,6 +376,62 @@ pub fn preview_has_meaningful_contrast(rgba: &[u8], clear: [u8; 4]) -> bool {
         && m.luma_stddev >= PREVIEW_MIN_LUMA_STDDEV
         && m.pct_pixels_above_delta >= PREVIEW_MIN_CONTRAST_PIXEL_PCT
         && unique.len() >= PREVIEW_MIN_UNIQUE_COLORS
+}
+
+/// Returns true when the center of the frame contains bright smoke-toned pixels (not just grid lines).
+pub fn preview_has_smoke_plume(rgba: &[u8], width: u32, height: u32, clear: [u8; 4]) -> bool {
+    if width == 0 || height == 0 || rgba.len() != width as usize * height as usize * 4 {
+        return false;
+    }
+    let cx = width as i32 / 2;
+    let cy = height as i32 / 2;
+    let rx = (width as i32 / 3).max(32);
+    let ry = (height as i32 / 3).max(32);
+    let mut center_total = 0usize;
+    let mut smoke_pixels = 0usize;
+    let mut bright_pixels = 0usize;
+
+    for y in (cy - ry).max(0)..(cy + ry).min(height as i32) {
+        for x in (cx - rx).max(0)..(cx + rx).min(width as i32) {
+            let i = (y as u32 * width + x as u32) as usize * 4;
+            let px = &rgba[i..i + 4];
+            let luma =
+                0.2126 * px[0] as f32 + 0.7152 * px[1] as f32 + 0.0722 * px[2] as f32;
+            let delta = px[0]
+                .abs_diff(clear[0])
+                .max(px[1].abs_diff(clear[1]))
+                .max(px[2].abs_diff(clear[2]));
+            center_total += 1;
+            if luma >= PREVIEW_MIN_SMOKE_LUMA && delta >= PREVIEW_MIN_MAX_DELTA / 2 {
+                smoke_pixels += 1;
+            }
+            if luma >= 150.0 && delta >= PREVIEW_MIN_MAX_DELTA {
+                bright_pixels += 1;
+            }
+        }
+    }
+
+    if center_total == 0 {
+        return false;
+    }
+    let smoke_pct = 100.0 * smoke_pixels as f32 / center_total as f32;
+    let bright_pct = 100.0 * bright_pixels as f32 / center_total as f32;
+    smoke_pct >= PREVIEW_MIN_SMOKE_CENTER_PCT && bright_pct >= PREVIEW_MIN_SMOKE_BRIGHT_PCT
+}
+
+/// Picks a mid-animation frame where the plume has developed.
+pub fn default_smoke_preview_frame(mesh: &ViewportMesh) -> u32 {
+    mesh.smoke
+        .as_ref()
+        .map(|smoke| {
+            let count = smoke.frames.len();
+            if count <= 1 {
+                0
+            } else {
+                ((count - 1) * 2 / 3).max(1) as u32
+            }
+        })
+        .unwrap_or(0)
 }
 
 /// Converts OpenGL clip space (z in [-w, w]) to WebGPU clip space (z in [0, w]).
@@ -425,7 +493,8 @@ pub fn default_camera_for_mesh(mesh: &ViewportMesh) -> NativeViewportCamera {
 
     if mesh.positions.is_empty() {
         if let Some(smoke) = &mesh.smoke {
-            if let Some(frame) = smoke.frames.first() {
+            let frame_idx = default_smoke_preview_frame(mesh) as usize;
+            if let Some(frame) = smoke.frames.get(frame_idx) {
                 if frame.particle_count > 0 {
                     min = [f32::INFINITY; 3];
                     max = [f32::NEG_INFINITY; 3];
@@ -443,7 +512,7 @@ pub fn default_camera_for_mesh(mesh: &ViewportMesh) -> NativeViewportCamera {
                         mean_size += frame.sizes.get(i).copied().unwrap_or(0.25);
                     }
                     mean_size /= frame.particle_count as f32;
-                    let pad = (mean_size * 4.0).max(0.75);
+                    let pad = (mean_size * 5.5).max(1.2);
                     for axis in 0..3 {
                         min[axis] -= pad;
                         max[axis] += pad;
@@ -489,17 +558,21 @@ pub fn default_camera_for_mesh(mesh: &ViewportMesh) -> NativeViewportCamera {
     .into_iter()
     .fold(1.5_f32, f32::max);
     let smoke_only = mesh.positions.is_empty() && mesh.smoke.is_some();
-    let dist_scale = if smoke_only { 2.0 } else { 1.8 };
+    let dist_scale = if smoke_only { 1.65 } else { 1.8 };
     let dist = extent * dist_scale;
     NativeViewportCamera {
         eye: [
-            center[0] + dist * 0.72,
-            center[1] + dist * 0.42,
-            center[2] + dist * 0.88,
+            center[0] + dist * 0.45,
+            center[1] + dist * 0.32,
+            center[2] + dist * 1.05,
         ],
-        target: center,
+        target: [
+            center[0],
+            center[1] + extent * 0.08,
+            center[2],
+        ],
         up: [0.0, 1.0, 0.0],
-        fov_y_deg: if smoke_only { 42.0 } else { 50.0 },
+        fov_y_deg: if smoke_only { 34.0 } else { 50.0 },
     }
 }
 
@@ -915,6 +988,21 @@ fn pack_particles(frame: &ViewportSmokeFrame) -> Vec<SmokeParticle> {
         .collect()
 }
 
+fn sort_smoke_particles_back_to_front(
+    particles: &mut [SmokeParticle],
+    eye: [f32; 3],
+) {
+    particles.sort_by(|a, b| {
+        let da = (a.center[0] - eye[0]).powi(2)
+            + (a.center[1] - eye[1]).powi(2)
+            + (a.center[2] - eye[2]).powi(2);
+        let db = (b.center[0] - eye[0]).powi(2)
+            + (b.center[1] - eye[1]).powi(2)
+            + (b.center[2] - eye[2]).powi(2);
+        db.partial_cmp(&da).unwrap_or(std::cmp::Ordering::Equal)
+    });
+}
+
 async fn render_wgpu(
     mesh: &ViewportMesh,
     smoke_frame: u32,
@@ -1211,7 +1299,7 @@ async fn render_wgpu(
             entry_point: Some("fs_main"),
             targets: &[Some(wgpu::ColorTargetState {
                 format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                blend: None,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                 write_mask: wgpu::ColorWrites::ALL,
             })],
             compilation_options: Default::default(),
@@ -1301,7 +1389,7 @@ async fn render_wgpu(
             entry_point: Some("fs_main"),
             targets: &[Some(wgpu::ColorTargetState {
                 format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                blend: None,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                 write_mask: wgpu::ColorWrites::ALL,
             })],
             compilation_options: Default::default(),
@@ -1413,7 +1501,10 @@ async fn render_wgpu(
             })],
             compilation_options: Default::default(),
         }),
-        primitive: wgpu::PrimitiveState::default(),
+        primitive: wgpu::PrimitiveState {
+            cull_mode: None,
+            ..Default::default()
+        },
         depth_stencil: Some(wgpu::DepthStencilState {
             format: wgpu::TextureFormat::Depth32Float,
             depth_write_enabled: false,
@@ -1472,7 +1563,11 @@ async fn render_wgpu(
         .smoke
         .as_ref()
         .and_then(|s| s.frames.get(smoke_frame as usize))
-        .map(pack_particles);
+        .map(|frame| {
+            let mut particles = pack_particles(frame);
+            sort_smoke_particles_back_to_front(&mut particles, camera.eye);
+            particles
+        });
 
     let smoke_instance_buffer = smoke_particles.as_ref().map(|particles| {
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -1527,22 +1622,6 @@ async fn render_wgpu(
             timestamp_writes: None,
             occlusion_query_set: None,
         });
-
-        if let (Some(grid_vb), Some(grid_bg)) = (&grid_vertex_buffer, Some(&grid_bind_group)) {
-            pass.set_pipeline(&grid_pipeline);
-            pass.set_bind_group(0, grid_bg, &[]);
-            pass.set_vertex_buffer(0, grid_vb.slice(..));
-            pass.draw(0..grid_lines.len() as u32, 0..1);
-        }
-
-        if let (Some(collider_vb), Some(collider_bg)) =
-            (&collider_vertex_buffer, Some(&grid_bind_group))
-        {
-            pass.set_pipeline(&collider_pipeline);
-            pass.set_bind_group(0, collider_bg, &[]);
-            pass.set_vertex_buffer(0, collider_vb.slice(..));
-            pass.draw(0..collider_lines.len() as u32, 0..1);
-        }
 
         if let (Some(vb), Some(ib), Some(bg)) = (
             &mesh_vertex_buffer,
@@ -1731,7 +1810,8 @@ mod tests {
     fn smoke_particles_project_into_view() {
         let mesh = cook_viewport_mesh(&Graph::smoke_puff_preset()).expect("cook");
         let camera = default_camera_for_mesh(&mesh);
-        let diag = preview_projection_diagnostics(&mesh, 0, 640, 480, &camera);
+        let frame = default_smoke_preview_frame(&mesh);
+        let diag = preview_projection_diagnostics(&mesh, frame, 640, 480, &camera);
         assert!(diag.particle_count > 0, "smoke_puff should cook particles");
         assert!(
             diag.particles_in_frustum > 0,
@@ -1747,7 +1827,8 @@ mod tests {
     fn render_smoke_puff_has_meaningful_contrast() {
         let mesh = cook_viewport_mesh(&Graph::smoke_puff_preset()).expect("cook");
         let camera = default_camera_for_mesh(&mesh);
-        let preview = render_native_viewport(&mesh, 0, 640, 480, &camera).expect("render");
+        let frame = default_smoke_preview_frame(&mesh);
+        let preview = render_native_viewport(&mesh, frame, 640, 480, &camera).expect("render");
         let rgba = preview.decode_rgba().expect("decode");
         assert_eq!(rgba.len(), 640 * 480 * 4);
         assert!(
@@ -1755,19 +1836,76 @@ mod tests {
             "smoke_puff preview metrics: {:?}",
             preview_contrast_metrics(&rgba, CLEAR_RGBA)
         );
+        assert!(
+            preview_has_smoke_plume(&rgba, preview.width, preview.height, CLEAR_RGBA),
+            "smoke_puff should show a bright plume in the center"
+        );
     }
 
     #[test]
     fn render_smoke_sphere_has_meaningful_contrast() {
         let mesh = cook_viewport_mesh(&Graph::smoke_sphere_preset()).expect("cook");
         let camera = default_camera_for_mesh(&mesh);
-        let preview = render_native_viewport(&mesh, 0, 640, 480, &camera).expect("render");
+        let frame = default_smoke_preview_frame(&mesh);
+        let preview = render_native_viewport(&mesh, frame, 640, 480, &camera).expect("render");
         let rgba = preview.decode_rgba().expect("decode");
         assert!(
             preview_has_meaningful_contrast(&rgba, CLEAR_RGBA),
             "smoke_sphere preview metrics: {:?}",
             preview_contrast_metrics(&rgba, CLEAR_RGBA)
         );
+        assert!(
+            preview_has_smoke_plume(&rgba, preview.width, preview.height, CLEAR_RGBA),
+            "smoke_sphere should show a bright plume in the center"
+        );
+    }
+
+    #[test]
+    fn render_smoke_puff_writes_preview_artifact() {
+        let mesh = cook_viewport_mesh(&Graph::smoke_puff_preset()).expect("cook");
+        let camera = default_camera_for_mesh(&mesh);
+        let frame = default_smoke_preview_frame(&mesh);
+        let preview = render_native_viewport(&mesh, frame, 640, 480, &camera).expect("render");
+        let rgba = preview.decode_rgba().expect("decode");
+        assert!(preview_has_meaningful_contrast(&rgba, CLEAR_RGBA));
+        assert!(preview_has_smoke_plume(
+            &rgba,
+            preview.width,
+            preview.height,
+            CLEAR_RGBA
+        ));
+
+        let artifact_dir =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/artifacts");
+        std::fs::create_dir_all(&artifact_dir).expect("artifact dir");
+        let png_path = artifact_dir.join("smoke_puff_wgpu_preview.png");
+        write_rgba_png(&png_path, preview.width, preview.height, &rgba).expect("write png");
+        assert!(png_path.exists());
+        assert!(std::fs::metadata(&png_path).expect("png metadata").len() > 1024);
+    }
+
+    #[test]
+    fn render_smoke_sphere_writes_preview_artifact() {
+        let mesh = cook_viewport_mesh(&Graph::smoke_sphere_preset()).expect("cook");
+        let camera = default_camera_for_mesh(&mesh);
+        let frame = default_smoke_preview_frame(&mesh);
+        let preview = render_native_viewport(&mesh, frame, 640, 480, &camera).expect("render");
+        let rgba = preview.decode_rgba().expect("decode");
+        assert!(preview_has_meaningful_contrast(&rgba, CLEAR_RGBA));
+        assert!(preview_has_smoke_plume(
+            &rgba,
+            preview.width,
+            preview.height,
+            CLEAR_RGBA
+        ));
+
+        let artifact_dir =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/artifacts");
+        std::fs::create_dir_all(&artifact_dir).expect("artifact dir");
+        let png_path = artifact_dir.join("smoke_sphere_wgpu_preview.png");
+        write_rgba_png(&png_path, preview.width, preview.height, &rgba).expect("write png");
+        assert!(png_path.exists());
+        assert!(std::fs::metadata(&png_path).expect("png metadata").len() > 1024);
     }
 
     #[test]
@@ -1798,6 +1936,7 @@ mod tests {
         assert!(png_path.exists());
         assert!(std::fs::metadata(&png_path).expect("png metadata").len() > 1024);
     }
+
 
     fn write_rgba_png(path: &std::path::Path, width: u32, height: u32, rgba: &[u8]) -> Result<(), String> {
         use std::io::Write;
