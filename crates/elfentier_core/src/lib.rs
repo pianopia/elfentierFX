@@ -1,19 +1,23 @@
 //! elfentierFX core library — procedural graph and mesh primitives.
 //!
-//! Alpha 1 adds building generation, placement, graph cook, and glTF export.
+//! Alpha 2 adds viewport mesh buffers, prompt interpreter, and agent API surface.
 
+pub mod agent;
 pub mod buffer;
 pub mod building;
+pub mod explain;
 pub mod export;
 pub mod graph;
 pub mod mesh;
 pub mod placement;
+pub mod prompt;
+pub mod viewport;
 
 use mesh::create_unit_box_mesh;
 use serde::{Deserialize, Serialize};
 
 /// Semantic version of the core library.
-pub const CORE_VERSION: &str = "0.1.0-alpha.1";
+pub const CORE_VERSION: &str = "0.1.0-alpha.2";
 
 /// Returns the core library version string.
 pub fn core_version() -> &'static str {
@@ -49,8 +53,8 @@ mod tests {
     use graph::Graph;
 
     #[test]
-    fn core_version_is_alpha_one() {
-        assert!(core_version().contains("alpha.1"));
+    fn core_version_is_alpha_two() {
+        assert!(core_version().contains("alpha.2"));
     }
 
     #[test]

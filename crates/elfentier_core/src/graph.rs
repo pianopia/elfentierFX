@@ -63,6 +63,65 @@ impl Graph {
         }
     }
 
+    pub fn grid_block_preset() -> Self {
+        let params_id = NodeId("building_params".into());
+        let mesh_id = NodeId("building_mesh".into());
+        let grid_id = NodeId("fill_grid".into());
+        let root_id = NodeId("city_root".into());
+
+        Self {
+            name: "Grid Block".into(),
+            nodes: vec![
+                Node {
+                    id: params_id.clone(),
+                    kind: NodeKind::BuildingParams,
+                    label: "Block Params".into(),
+                    building_params: Some(BuildingParams::default()),
+                    path_input: None,
+                    grid_input: None,
+                },
+                Node {
+                    id: mesh_id.clone(),
+                    kind: NodeKind::BuildingMesh,
+                    label: "Building Mesh".into(),
+                    building_params: None,
+                    path_input: None,
+                    grid_input: None,
+                },
+                Node {
+                    id: grid_id.clone(),
+                    kind: NodeKind::FillGrid,
+                    label: "Grid Fill".into(),
+                    building_params: None,
+                    path_input: None,
+                    grid_input: Some(GridInput::default()),
+                },
+                Node {
+                    id: root_id.clone(),
+                    kind: NodeKind::CityRoot,
+                    label: "City Root".into(),
+                    building_params: None,
+                    path_input: None,
+                    grid_input: None,
+                },
+            ],
+            edges: vec![
+                Edge {
+                    from: params_id.clone(),
+                    to: mesh_id.clone(),
+                },
+                Edge {
+                    from: mesh_id.clone(),
+                    to: grid_id.clone(),
+                },
+                Edge {
+                    from: grid_id.clone(),
+                    to: root_id.clone(),
+                },
+            ],
+        }
+    }
+
     pub fn shop_street_preset() -> Self {
         let params_id = NodeId("building_params".into());
         let mesh_id = NodeId("building_mesh".into());
@@ -145,7 +204,7 @@ enum NodeValue {
     Mesh(Mesh),
     Instances(Vec<InstanceTransform>), // reserved for multi-merge inputs
     City {
-        mesh: Mesh,
+        base_mesh: Mesh,
         instances: Vec<InstanceTransform>,
     },
 }
@@ -154,6 +213,13 @@ enum NodeValue {
 #[derive(Debug, Clone)]
 pub struct CityOutput {
     pub mesh: Mesh,
+    pub instances: Vec<InstanceTransform>,
+}
+
+/// Instanced city geometry (base mesh + transforms) for viewport rendering.
+#[derive(Debug, Clone)]
+pub struct CityInstanced {
+    pub base_mesh: Mesh,
     pub instances: Vec<InstanceTransform>,
 }
 
@@ -169,13 +235,8 @@ pub fn cook_graph(graph: &Graph) -> Result<CookResult, String> {
     })
 }
 
-/// Evaluates the graph, merges instanced geometry, and exports glTF.
-pub fn cook_and_export(graph: &Graph, path: &str) -> Result<crate::export::ExportResult, String> {
-    let city = evaluate_city(graph)?;
-    export_glb(&city.mesh, path).map_err(|e| e.to_string())
-}
-
-fn evaluate_city(graph: &Graph) -> Result<CityOutput, String> {
+/// Evaluates the graph and returns base mesh + instance transforms (no merge).
+pub fn evaluate_city_instanced(graph: &Graph) -> Result<CityInstanced, String> {
     let root = graph
         .nodes
         .iter()
@@ -184,13 +245,36 @@ fn evaluate_city(graph: &Graph) -> Result<CityOutput, String> {
 
     let values = evaluate_all(graph)?;
     match values.get(&root.id) {
-        Some(NodeValue::City { mesh, instances }) => Ok(CityOutput {
-            mesh: mesh.clone(),
+        Some(NodeValue::City {
+            base_mesh,
+            instances,
+            ..
+        }) => Ok(CityInstanced {
+            base_mesh: base_mesh.clone(),
             instances: instances.clone(),
+        }),
+        Some(NodeValue::Mesh(m)) => Ok(CityInstanced {
+            base_mesh: m.clone(),
+            instances: vec![InstanceTransform::default()],
         }),
         Some(_) => Err("CityRoot did not receive city output".into()),
         None => Err("CityRoot was not evaluated".into()),
     }
+}
+
+/// Evaluates the graph, merges instanced geometry, and exports glTF.
+pub fn cook_and_export(graph: &Graph, path: &str) -> Result<crate::export::ExportResult, String> {
+    let city = evaluate_city(graph)?;
+    export_glb(&city.mesh, path).map_err(|e| e.to_string())
+}
+
+fn evaluate_city(graph: &Graph) -> Result<CityOutput, String> {
+    let instanced = evaluate_city_instanced(graph)?;
+    let merged = merge_instances(&instanced.base_mesh, &instanced.instances);
+    Ok(CityOutput {
+        mesh: merged,
+        instances: instanced.instances,
+    })
 }
 
 fn evaluate_all(graph: &Graph) -> Result<HashMap<NodeId, NodeValue>, String> {
@@ -239,9 +323,8 @@ fn evaluate_node(
                 .map(|p| p.seed)
                 .unwrap_or(1);
             let instances = place_along_path(&path, seed);
-            let merged = merge_instances(&mesh, &instances);
             Ok(NodeValue::City {
-                mesh: merged,
+                base_mesh: mesh,
                 instances,
             })
         }
@@ -253,9 +336,8 @@ fn evaluate_node(
                 .map(|p| p.seed)
                 .unwrap_or(1);
             let instances = fill_grid(&grid, seed);
-            let merged = merge_instances(&mesh, &instances);
             Ok(NodeValue::City {
-                mesh: merged,
+                base_mesh: mesh,
                 instances,
             })
         }
@@ -264,9 +346,12 @@ fn evaluate_node(
             let mut base_mesh: Option<Mesh> = None;
             for input_id in inputs {
                 match cache.get(input_id) {
-                    Some(NodeValue::City { mesh, instances }) => {
+                    Some(NodeValue::City {
+                        base_mesh: bm,
+                        instances,
+                    }) => {
                         if base_mesh.is_none() {
-                            base_mesh = Some(mesh.clone());
+                            base_mesh = Some(bm.clone());
                         }
                         all_instances.extend(instances.clone());
                     }
@@ -280,9 +365,8 @@ fn evaluate_node(
                 }
             }
             let mesh = base_mesh.unwrap_or_else(Mesh::unnamed);
-            let merged = merge_instances(&mesh, &all_instances);
             Ok(NodeValue::City {
-                mesh: merged,
+                base_mesh: mesh,
                 instances: all_instances,
             })
         }
@@ -291,12 +375,15 @@ fn evaluate_node(
                 .first()
                 .ok_or("CityRoot requires an input edge")?;
             match cache.get(input_id) {
-                Some(NodeValue::City { mesh, instances }) => Ok(NodeValue::City {
-                    mesh: mesh.clone(),
+                Some(NodeValue::City {
+                    base_mesh,
+                    instances,
+                }) => Ok(NodeValue::City {
+                    base_mesh: base_mesh.clone(),
                     instances: instances.clone(),
                 }),
                 Some(NodeValue::Mesh(mesh)) => Ok(NodeValue::City {
-                    mesh: mesh.clone(),
+                    base_mesh: mesh.clone(),
                     instances: vec![InstanceTransform::default()],
                 }),
                 _ => Err(format!("CityRoot input {} has unsupported type", input_id.0)),
