@@ -36,6 +36,9 @@ jobs:
       - name: Core tests
         run: cargo test -p elfentier_core
 
+      - name: Volume conversion tests
+        run: cargo test -p vdb_convert
+
       - name: Wgpu smoke preview tests
         env:
           WGPU_BACKEND: vulkan
@@ -55,3 +58,14 @@ jobs:
       - name: Frontend typecheck
         working-directory: apps/desktop
         run: npm run typecheck
+
+      - name: Install Three.js converter dependencies
+        working-directory: tools/three_to_unreal
+        run: npm ci
+
+      - name: Three.js conversion tests
+        working-directory: tools/three_to_unreal
+        run: npm test
+
+      - name: Unreal bundle preflight tests
+        run: python3 -m unittest discover -s integrations/unreal/tests -v

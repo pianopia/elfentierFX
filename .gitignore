@@ -40,3 +40,7 @@ Thumbs.db
 
 # Test / coverage
 coverage/
+.local-tools/
+artifacts/
+__pycache__/
+*.pyc

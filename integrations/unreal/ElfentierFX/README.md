@@ -20,9 +20,20 @@ Cook a graph in the desktop app, then click **Export Bundle**. The bundle direct
 
 ### Static mesh (city / GLB)
 
-1. Use Unreal's glTF importer (**GLTFExporter** plugin) or third-party GLTF import.
+1. Use Unreal's **Interchange glTF importer** (GLTFExporter is an export plugin).
 2. Point at `city_mesh.glb` inside the bundle directory.
-3. Units are **meters**, **Z-up** in Unreal — rotate imported mesh **-90° on X** if your pipeline expects Y-up source data.
+3. Source data is **meters, Y-up**. Standard Interchange converts to Unreal's **centimeters, Z-up**; do not apply a second manual rotation/scale.
+
+### External Three.js → UE native assets
+
+See [Three.js converter](../../../tools/three_to_unreal/README.md).
+`Content/Python/import_three_bundle.py` imports the separate
+`elfentier_three_unreal_v1` manifest, creates native Custom HLSL/water materials,
+assigns them to StaticMesh slots, and imports baked Alembic/VDB payloads.
+It can also be loaded directly without compiling this plugin's C++ skeleton.
+Enable Python Editor Script Plugin, Editor Scripting Utilities, Interchange,
+and Alembic Importer. VDB frames import as individual static SVTs; animated SVT
+sequence import and HeterogeneousVolume material/actor setup are manual.
 
 ### Liquid particle cache
 

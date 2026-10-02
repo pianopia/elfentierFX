@@ -112,16 +112,26 @@ fn main() {
                 );
             } else {
                 let input = require_path(&args, 3);
-                if input.ends_with(".evol") {
-                    eprintln!(
-                        "`.evol` to `.vdb` conversion requires a cooked smoke graph today.\n\
-                         Use: vdb_convert to-vdb <out.vdb> --from-preset\n\
-                         Or export a bundle from elfentierFX (includes smoke_density.vdb)."
-                    );
-                    std::process::exit(2);
+                if !input.to_lowercase().ends_with(".evol") || args[4..].iter().any(|arg| arg != "--sequence" && arg != "--ue-space") {
+                    eprintln!("expected <input.evol> [--sequence] [--ue-space]");
+                    std::process::exit(1);
                 }
-                eprintln!("unknown input `{input}` for to-vdb");
-                std::process::exit(1);
+                match vdb_convert::convert_evol(
+                    Path::new(input),
+                    Path::new(output),
+                    args.iter().any(|a| a == "--sequence"),
+                    args.iter().any(|a| a == "--ue-space"),
+                ) {
+                    Ok(paths) => {
+                        for path in paths {
+                            println!("wrote {}", path.display());
+                        }
+                    }
+                    Err(err) => {
+                        eprintln!("error: {err}");
+                        std::process::exit(1);
+                    }
+                }
             }
         }
         "from-vdb" => {
@@ -203,6 +213,7 @@ fn print_usage() {
            vdb_convert info <file.vdb|file.evol>\n\
            vdb_convert from-smoke-preset <out.evol>\n\
            vdb_convert to-vdb <out.vdb> --from-preset\n\
+           vdb_convert to-vdb <out.vdb> <input.evol> [--sequence] [--ue-space]\n\
            vdb_convert from-vdb <file.vdb> <out.evol>\n\
          \n\
          Formats:\n\

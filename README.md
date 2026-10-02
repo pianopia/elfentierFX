@@ -26,6 +26,7 @@ docs/agent-api.md      JSON command surface for agents
 docs/export-formats.md Cook export bundle + payload format reference
 integrations/          Unity, Unreal, Blender import packages
 tools/vdb_convert/     CLI for .evol interchange and OpenVDB fog .vdb I/O
+tools/three_to_unreal/  Three.js scene/PBR/shader/FX converter for UE5 (external adapter)
 ```
 
 ## Alpha 2 + Fluids Phase 1
@@ -74,6 +75,16 @@ Extends Phase 2 AABB colliders with voxelized **mesh SDF** mode on the same `Col
 **Alpha 2 (OpenVDB I/O spike):** smoke graphs export an optional `smoke_density.vdb` fog FloatGrid (last frame) alongside `.evol` / atlas payloads. Reading uses `vdb-rs`; writing is a pure-Rust minimal encoder (uncompressed active-mask). Open `.vdb` in standard OpenVDB readers and tools. Unity users install **[Unity Volume Importer](https://github.com/pianopia/UnityVolumeImporter)** (`com.louddin.unity-volume-importer`) for legacy `.evol` in-editor import — native `.vdb` there remains on that product's roadmap.
 
 OpenVDB is a trademark of LF Projects, LLC.
+
+## Three.js → Unreal Engine 5
+
+The standalone [converter](tools/three_to_unreal/README.md) imports external Three.js
+scenes into native UE assets: GLB/PBR, a supported GLSL expression subset → HLSL
+materials, analytic water WPO, fixed-topology fluid surfaces → Alembic, and CPU
+density grids → OpenVDB sequences/SVT. It includes a browser ZIP exporter, Node
+CLI, Blender cache baker, and UE Editor Python importer. The desktop viewport
+continues to use Rust/wgpu. Arbitrary shaders, screen-space effects and GPU fluid
+solvers need explicit adapters/readback; unsupported conversions produce diagnostics.
 
 ## Prerequisites
 
