@@ -79,12 +79,16 @@ OpenVDB is a trademark of LF Projects, LLC.
 ## Three.js → Unreal Engine 5
 
 The standalone [converter](tools/three_to_unreal/README.md) imports external Three.js
-scenes into native UE assets: GLB/PBR, a supported GLSL expression subset → HLSL
-materials, analytic water WPO, fixed-topology fluid surfaces → Alembic, and CPU
+scenes into native UE assets: GLB/PBR, GLSL → SPIR-V → HLSL with explicit native
+material bindings, analytic water WPO, fixed-topology fluid surfaces → Alembic, and CPU
 density grids → OpenVDB sequences/SVT. It includes a browser ZIP exporter, Node
 CLI, Blender cache baker, and UE Editor Python importer. The desktop viewport
-continues to use Rust/wgpu. Arbitrary shaders, screen-space effects and GPU fluid
-solvers need explicit adapters/readback; unsupported conversions produce diagnostics.
+continues to use Rust/wgpu. Captured GPUComputationRenderer graphs generate UE
+Runtime plugins using GlobalShaders, RDG, epoch-preserving feedback and native
+RGBA32f render targets. A five-pass fluid solver is verified against a CPU reference
+on UE5.8.2's GPU. The local three-ocean-beach adapter compiles eight real shaders
+and creates native sky/sand/water materials. Renderer resources and JavaScript
+callbacks require explicit bindings; unsupported conversions produce diagnostics.
 
 ## Prerequisites
 

@@ -8,7 +8,8 @@ three.jsの実行中のSceneを、UE5で使用できる**ネイティブアセ�
 |---|---|---|
 | モデル | `scene.glb` → StaticMesh / SkeletalMesh | BufferGeometry、UV、法線、頂点カラー、複数マテリアル、スキン、指定したAnimationClip |
 | PBR | glTF → UEマテリアル | Standard/Physical/Basic。テクスチャは画像ロード済みのブラウザー経路。Physical拡張のUE対応は要確認 |
-| GLSL | HLSL → `MaterialExpressionCustom` | スカラー/ベクトル式、uniformパラメーター、UV、Time。RGBAをUnlitのEmissive/Opacityへ接続 |
+| GLSL | SPIR-V → HLSL / `MaterialExpressionCustom` | 全体の言語変換と、明示的なリソース・座標バインドによるUE接続。簡易式変換も対応 |
+| GPUソルバー | 生成Runtimeプラグイン → GlobalShader / RDG | 捕捉したGPUComputationRendererグラフ全体、RGBA32f、同時ping-pong更新 |
 | 水面 | UEのLitマテリアル + WPO | 指定した正弦波をワールド座標で再生。流体ソルバーの移植ではありません |
 | 流体表面 | JSONスナップショット → Blender → `.abc` → GeometryCache | 三角形の固定トポロジー、全頂点のフレームごとの位置。fpsを保持 |
 | 煙・密度 | `.evol` → Rust → `.vdb`列 → SparseVolumeTexture | CPUのスカラー密度グリッド、複数フレーム。UE用cm/Z-upへ座標変換 |
@@ -84,7 +85,7 @@ node src/cli.js bake /path/to/unpacked-bundle \
 
 ## シェーダーの変換
 
-自動抽出は、標準的な位置変換のvertex shaderと、`main()`内の
+簡易式変換の自動抽出は、標準的な位置変換のvertex shaderと、`main()`内の
 `gl_FragColor = 式;`だけで構成されたfragment shaderに限定します。
 一般のShaderMaterialには、意図したRGBA式を明示します。
 
@@ -107,8 +108,8 @@ normalize length min max pow dot cross step mix clamp smoothstep mod atan`。
 
 明示アダプターは指定したfragment式だけを出力します。元のvertex変形・照明・
 raymarchingの再現を保証しません。元のvertex/fragment GLSLは診断用JSONに保存します。
-sampler/matrix、ヘルパー関数、ループ、プリプロセッサ、TSL/WGSL、任意の
-`onBeforeCompile`変更は自動変換しません。元のGLSL全体をHLSLとして実行する機能はありません。
+この簡易経路はsampler/matrix、ヘルパー関数、ループ、プリプロセッサ、TSL/WGSL、任意の
+`onBeforeCompile`変更を変換しません。GLSL全体の変換には下記のコンパイラー経路を使います。
 
 水面のアダプター:
 
@@ -140,8 +141,9 @@ const volumes = [{
 
 `volumeFromTexture(texture, { boundsMin, boundsMax })`はCPUデータを持つ
 RedFormatのFloat/UnsignedByte `Data3DTexture`を抽出します。Byteは0..1へ正規化。
-GPU RenderTarget/GPGPUの流体は、元アプリでreadbackまたはCPUの表面生成を行ってから
-上の形式へ渡してください。カメラ依存の水面画像から流体メッシュは復元できません。
+GPU RenderTargetからキャッシュをベイクする場合は、元アプリでreadbackまたはCPUの表面生成を行ってから
+上の形式へ渡してください。GPU計算をUEで再実行する場合は下記のグラフ経路を使います。
+カメラ依存の水面画像から流体メッシュは復元できません。
 固定トポロジー以外のメッシュ列とFLIP粒子からの表面再構成は未対応です。
 
 `vdb_convert`単体でも使用可能です。
@@ -171,6 +173,8 @@ import sys
 sys.path.insert(0, r'C:/path/to/elfentierFX/integrations/unreal/ElfentierFX/Content/Python')
 import import_three_bundle
 result = import_three_bundle.import_bundle(r'C:/exports/MyEffect', '/Game/MyEffect')
+# Headless Editorで保存済み材質を読み直して描画する場合:
+import_three_bundle.refresh_native_materials(result)
 ```
 
 出力先は空のContentフォルダーを指定してください。先に全ペイロードの有無、
@@ -193,7 +197,89 @@ Channel mappingや消散/散乱係数はUEで調整してください。
 - スキン/AnimationClipはGLBで保持しますが、UE SkeletalMeshの設定はソースに応じて調整が必要です。
 - インスタンスは最大10000件まで展開。大量の草/都市には元アプリ側の結合・ベイクを推奨。
 - 密度データは512 MiBまで、各軸512以下。表面キャッシュも入力上限を検査します。
-- 本体デスクトップへの専用取り込みUI、Niagara/Waterの自動グラフ生成、リアルタイムGPUソルバーの移植は含みません。
+- 本体デスクトップへの専用取り込みUI、Niagara/Waterの自動グラフ生成は含みません。GPUソルバーのネイティブ生成は下記の明示的なグラフ経路で対応します。
+
+## GLSL全体とネイティブGPUグラフ
+
+式だけでなく、関数・ループ・行列・テクスチャを含むGLSLを公式の
+[glslang](https://github.com/KhronosGroup/glslang)でSPIR-Vへコンパイルし、
+[SPIRV-Cross](https://github.com/KhronosGroup/SPIRV-Cross)でHLSLへ変換します。
+両実行ファイルをPATHへ入れるか、`GLSLANG_VALIDATOR`と`SPIRV_CROSS`環境変数を設定します。
+WindowsではKhronosのソースをCMakeでビルドできます。LinuxのCIはglslang-tools/spirv-crossを使用します。
+
+```powershell
+node src/cli.js shader water.frag --stage frag --out exports/water
+node src/cli.js shader solver.comp --stage comp --vulkan --out exports/solver
+```
+
+`vert`/`frag`/`comp`をサポート。GLSL、SPIR-V、HLSL、リフレクションとコンパイル診断を出力します。
+WebGL互換モードはattribute/varying/gl_FragColor/texture2Dを現行構文に置換し、ShaderChunkを展開します。
+Rendererが注入する属性・uniform・defineは、元Rendererの完全なシェーダーを渡すか、
+`compileGLSL(source, {prefix, defines, chunks})`で指定してください。`chunks`はソースと同じthree.js版の辞書を使います。
+GLSLの構文・型はコンパイラーが検査し、失敗を成功扱いにはしません。
+出力の`languageCompiled`は言語変換の成功です。UEの描画パイプラインへの接続を表すものではありません。
+
+ブラウザーのGPUComputationRendererをグラフ化:
+
+```js
+import { captureGPUComputation } from '@elfentierfx/three-to-unreal/gpu-graph';
+const graph = captureGPUComputation(gpuCompute, {
+  name: 'MyFluid',
+  bindings: { 'velocity.dt': 'delta', 'velocity.time': 'time' }
+});
+// graphをJSONとして保存。CPU初期値からの再実行を捕捉し、進行中GPU状態は読まない。
+```
+
+```powershell
+node src/cli.js gpu captured-graph.json --out exports/ElfentierGpuMyFluid
+```
+
+生成プラグインをUEプロジェクトの`Plugins/ElfentierGpuMyFluid`へコピーし、Editorをビルドします。
+UE5.8.2で検証したRuntimeモジュールです。各変数をGlobalShaderへ変換し、RDGで実行します。
+`ElfentierMyFluidComponent`をActorへ追加し、`Reset()`、`Step(delta, iterations)`、
+`GetOutput('velocity')`でRGBA32fのUTextureRenderTarget2Dを取得します。マテリアルから通常のTextureとして参照できます。
+`SetUniform('velocity.force', Vector4)`で定数を変更します。time/delta/frameの明示的なバインドは自動更新します。
+
+全パスが同じ前フレームを読み、全パス終了後に新しい状態へ交換します。
+GPUComputationRendererの`compute()`を1回呼ぶことと`Step(delta,1)`が対応します。
+**圧力パスのみを反復するJSループ**などは、その実行スケジュールを別途アダプターで定義する必要があります。
+同じグラフを`iterations`回繰り返す場合は、グラフ全体を毎回更新します。
+
+対応範囲は2D RGBA Float32、初期CPUデータ、最大32変数/4096平方/初期状態512MiB、
+nearest/linearとclamp/repeat/mirror、float/vec2/vec3/vec4のuniformです。
+HalfFloat、外部テクスチャ、独自SSBO/image、MRT、fragment derivatives/discardを使うソルバーは
+明示的なアダプターが必要です。JSのコールバック、GUI、入力、音、非公開のRenderer状態を
+任意のソースから推測する万能な自動移植ではありません。未知のリソースは診断して停止します。
+
+`native-port-report.json`は生成段階ではnativeBuildVerified/gpuExecutionVerifiedをfalseにします。
+生成できたこと、UEビルドが通ったこと、GPUで正しく実行したことを区別してください。
+
+## three-ocean-beachでの実ソース検証
+
+ローカルのthree-ocean-beachのファイルを読み、元プロジェクトは編集しません。
+
+```powershell
+node examples/compile-ocean.mjs C:/path/three-ocean-beach C:/exports/ocean-shaders
+node examples/export-ocean.mjs C:/path/three-ocean-beach C:/exports/ocean-native
+node examples/stable-fluid.mjs C:/exports/ElfentierGpuStableFluid
+```
+
+空・砂浜・水面・草の計8シェーダーを元three.js版でコンパイルします。
+空/砂浜/水面の重点検証バンドルは実際の砂テクスチャとGLBを出力し、
+元のGLSL関数を含むCustom HLSL、頂点変位用WPO、UE SceneColor/SceneDepthの屈折を生成します。
+UEがトーンマッピングするため、WebGLの末尾トーンマッピング/色空間変換は取り除きます。
+草9000本、石、岬、GUI/音、カメラ追従はこの重点検証バンドルに含みません。
+海は数式による水面表現であり、GPU流体ソルバーではありません。
+
+`examples/stable-fluid.mjs`は移流、発散、Jacobi圧力、射影、染料輸送の5パスを生成します。
+`test/ue_gpu.py`はUE上の全RGBA値を独立CPU参照計算と照合します。
+`test/ue_ocean.py`は実RHIで海のHLSLコンパイルと資産割り当てを確認します。
+`test/ue_ocean_render.py`は読み直した材質を再コンパイルし、空/砂浜/水面を
+SceneCapture2DでPNGへ描画します。UE5.8のheadless Editorで読み直した直後の
+描画には`refresh_native_materials(result)`が必要でした。これはEditor用の処理で、
+配布するプロジェクトでは通常のUEビルド・Cookを行います。
+これらは生成したプラグインをビルドした空の検証プロジェクトで実行してください。
+描画のピクセル一致やあらゆるthree.jsアプリケーションの再現を保証しません。
 
 ## 検証
 
@@ -212,11 +298,13 @@ python -m unittest discover -s integrations/unreal/tests -v
 で実行します。NullRHIの検証はアセット生成・割り当て確認であり、視覚的一致や
 GPU上でのシェーダー品質を検証するものではありません。
 
-2026-10-03のローカル検証: JavaScript 14件、Python事前検証7件、Rustコア72件、
+基本アセット経路の2026-10-03検証: JavaScript 14件、Python事前検証7件、Rustコア72件、
 VDB CLI/往復3件が成功。Blender 4.4でAlembicの最初/最後の頂点位置を往復確認。
 UE5.8.2でモデル3個、4フレームGeometryCache、static SVT 2個、Custom/water
 マテリアルの割り当てとVector4パラメーターを検証し、`ELFENTIER_UE_SMOKE_PASS`を確認しました。
-テクスチャ付きブラウザー出力、SkeletalMesh取り込み、GPU描画の視覚比較は未検証です。
+拡張後はJavaScript 22件、Python 8件、実UEの5パス流体GPU結果640値も検証しました。
+詳細は[検証記録](../../docs/three_to_unreal_validation.md)を参照してください。
+テクスチャ付きブラウザー出力、SkeletalMesh取り込み、WebGLとのピクセル比較は未検証です。
 
 参照:
 [three.js GLTFExporter](https://threejs.org/docs/pages/GLTFExporter.html)、

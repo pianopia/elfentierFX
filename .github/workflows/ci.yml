@@ -23,7 +23,9 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf \
-            mesa-vulkan-drivers
+            mesa-vulkan-drivers \
+            glslang-tools \
+            spirv-cross
 
       - name: Cache cargo
         uses: swatinem/rust-cache@v2
@@ -65,6 +67,9 @@ jobs:
 
       - name: Three.js conversion tests
         working-directory: tools/three_to_unreal
+        env:
+          GLSLANG_VALIDATOR: glslangValidator
+          SPIRV_CROSS: spirv-cross
         run: npm test
 
       - name: Unreal bundle preflight tests

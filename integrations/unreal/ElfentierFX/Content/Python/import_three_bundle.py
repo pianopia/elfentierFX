@@ -76,12 +76,12 @@ def validate_bundle(bundle_dir, allow_pending=False):
         if not re.fullmatch(r"[A-Za-z_]\w{0,127}", name) or name in names:
             raise ValueError("Invalid or duplicate material name")
         names.add(name)
-        if recipe.get("kind") not in {"gltf_pbr", "custom_expression", "water_wpo"}:
+        if recipe.get("kind") not in {"gltf_pbr", "custom_expression", "water_wpo", "compiled_shader"}:
             raise ValueError("Unsupported material recipe")
         if recipe["kind"] != "gltf_pbr":
-            if recipe.get("output") != ("float4" if recipe["kind"] == "custom_expression" else "float3"):
+            if recipe.get("output") != ("float3" if recipe["kind"] == "water_wpo" else "float4"):
                 raise ValueError("Invalid material output dimensions")
-            if not isinstance(recipe.get("hlsl"), str) or len(recipe["hlsl"]) > 65536:
+            if not isinstance(recipe.get("hlsl"), str) or len(recipe["hlsl"]) > 262144:
                 raise ValueError("Invalid HLSL recipe")
             inputs = recipe.get("inputs", [])
             input_names = set()
@@ -89,12 +89,25 @@ def validate_bundle(bundle_dir, allow_pending=False):
                 if not re.fullmatch(r"[A-Za-z_]\w*", node.get("name", "")) or node["name"] in input_names:
                     raise ValueError("Invalid custom input name")
                 input_names.add(node["name"])
-                if node.get("kind") not in {"uv", "time", "world_position", "scalar", "vector"}:
+                if node.get("kind") not in {"uv", "time", "world_position", "camera_position", "camera_vector", "screen_uv", "pixel_depth", "scene_color", "scene_depth", "texture", "scalar", "vector"}:
                     raise ValueError("Unsupported custom input")
                 if node["kind"] in {"scalar", "vector"}:
                     values = [node.get("value")] if node["kind"] == "scalar" else node.get("value", [])
                     if not values or (node["kind"] == "vector" and len(values) != 4) or not all(isinstance(v, (int, float)) and math.isfinite(v) for v in values):
                         raise ValueError("Invalid parameter default")
+                if node["kind"] == "texture":
+                    payload_path(root, node.get("path"))
+            if recipe.get("wpo"):
+                wpo = recipe["wpo"]
+                if wpo.get("kind") != "compiled_shader" or wpo.get("output") != "float3" or not isinstance(wpo.get("hlsl"), str) or len(wpo["hlsl"]) > 262144:
+                    raise ValueError("Invalid compiled WPO")
+                if wpo.get("inputs") != recipe.get("inputs"):
+                    # WPO may use a subset of pixel-stage parameters, but must use
+                    # the same fully validated source descriptions.
+                    pixel_inputs = {item["name"]: item for item in recipe.get("inputs", [])}
+                    for item in wpo.get("inputs", []):
+                        if pixel_inputs.get(item.get("name")) != item:
+                            raise ValueError("WPO requires matching validated inputs")
     return manifest
 
 
@@ -115,13 +128,19 @@ def import_asset(filename, destination, options=None):
     return paths
 
 
-def create_native_material(recipe, destination):
+def create_native_material(recipe, destination, existing=None, texture_assets=None):
     import unreal as ue
     lib = ue.MaterialEditingLibrary
-    asset = ue.AssetToolsHelpers.get_asset_tools().create_asset(
+    asset = existing or ue.AssetToolsHelpers.get_asset_tools().create_asset(
         "M_" + recipe["name"], destination, ue.Material, ue.MaterialFactoryNew())
     if not asset:
         raise RuntimeError(f"Cannot create material: {recipe['name']}")
+    if not existing:
+        asset.set_editor_property("two_sided", recipe.get("twoSided", False))
+        if recipe["kind"] != "water_wpo":
+            asset.set_editor_property("shading_model", ue.MaterialShadingModel.MSM_UNLIT)
+        if recipe.get("transparent"):
+            asset.set_editor_property("blend_mode", ue.BlendMode.BLEND_TRANSLUCENT)
     def node(cls):
         result = lib.create_material_expression(asset, cls)
         if not result:
@@ -141,10 +160,25 @@ def create_native_material(recipe, destination):
         kind = source["kind"]
         cls = {"uv": ue.MaterialExpressionTextureCoordinate, "time": ue.MaterialExpressionTime,
                "world_position": ue.MaterialExpressionWorldPosition,
+               "camera_position": ue.MaterialExpressionCameraPositionWS,
+               "camera_vector": ue.MaterialExpressionCameraVectorWS,
+               "screen_uv": ue.MaterialExpressionScreenPosition,
+               "pixel_depth": ue.MaterialExpressionPixelDepth,
+               "scene_color": ue.MaterialExpressionSceneColor,
+               "scene_depth": ue.MaterialExpressionSceneDepth,
+               "texture": ue.MaterialExpressionTextureObjectParameter,
                "scalar": ue.MaterialExpressionScalarParameter,
                "vector": ue.MaterialExpressionVectorParameter}[kind]
         expression = node(cls)
         output = ""
+        if kind == "screen_uv":
+            output = "ViewportUV"
+        if kind == "texture":
+            expression.set_editor_property("parameter_name", source["name"])
+            expression.set_editor_property("texture", texture_assets[source["path"]])
+            expression.set_editor_property("sampler_type", ue.MaterialSamplerType.SAMPLERTYPE_COLOR
+                                           if texture_assets[source["path"]].get_editor_property("srgb")
+                                           else ue.MaterialSamplerType.SAMPLERTYPE_LINEAR_COLOR)
         if kind in {"scalar", "vector"}:
             expression.set_editor_property("parameter_name", source["name"])
             value = source["value"]
@@ -160,7 +194,9 @@ def create_native_material(recipe, destination):
     def connect(expression, prop):
         if not lib.connect_material_property(expression, "", prop):
             raise RuntimeError(f"Cannot connect material property {prop}")
-    if recipe["kind"] == "water_wpo":
+    if existing:
+        connect(custom, ue.MaterialProperty.MP_WORLD_POSITION_OFFSET)
+    elif recipe["kind"] == "water_wpo":
         connect(custom, ue.MaterialProperty.MP_WORLD_POSITION_OFFSET)
         color = node(ue.MaterialExpressionConstant3Vector)
         color.set_editor_property("constant", ue.LinearColor(*recipe["color"], 1.0))
@@ -174,21 +210,44 @@ def create_native_material(recipe, destination):
         rgb = node(ue.MaterialExpressionComponentMask)
         for channel in ("r", "g", "b", "a"):
             rgb.set_editor_property(channel, channel != "a")
-        lib.connect_material_expressions(custom, "", rgb, "Input")
+        if not lib.connect_material_expressions(custom, "", rgb, ""):
+            raise RuntimeError("Cannot connect RGB mask")
         connect(rgb, ue.MaterialProperty.MP_EMISSIVE_COLOR)
         if recipe.get("transparent") or recipe.get("alphaTest", 0) > 0:
             alpha = node(ue.MaterialExpressionComponentMask)
             for channel in ("r", "g", "b", "a"):
                 alpha.set_editor_property(channel, channel == "a")
-            lib.connect_material_expressions(custom, "", alpha, "Input")
+            if not lib.connect_material_expressions(custom, "", alpha, ""):
+                raise RuntimeError("Cannot connect alpha mask")
             masked = recipe.get("alphaTest", 0) > 0
             asset.set_editor_property("blend_mode", ue.BlendMode.BLEND_MASKED if masked else ue.BlendMode.BLEND_TRANSLUCENT)
             if masked:
                 asset.set_editor_property("opacity_mask_clip_value", recipe["alphaTest"])
             connect(alpha, ue.MaterialProperty.MP_OPACITY_MASK if masked else ue.MaterialProperty.MP_OPACITY)
-    lib.recompile_material(asset)
+    if recipe.get("wpo"):
+        create_native_material(recipe["wpo"], destination, asset, texture_assets)
+    errors = lib.recompile_material(asset)
+    if errors:
+        raise RuntimeError(f"Native material compilation failed: {recipe['name']}: {list(errors)}")
     ue.EditorAssetLibrary.save_loaded_asset(asset)
     return asset
+
+
+def refresh_native_materials(import_result):
+    """Refresh loaded Editor material resources before capture/render validation.
+
+    UE5.8 headless reload can have a valid shader map but stale render resources.
+    This uses the Editor API; packaged projects compile/cook their materials.
+    """
+    import unreal as ue
+    for path in import_result["materials"]:
+        material = ue.load_asset(path)
+        if not isinstance(material, ue.Material):
+            raise RuntimeError(f"Missing native material: {path}")
+        errors = ue.MaterialEditingLibrary.recompile_material(material)
+        if errors:
+            raise RuntimeError(f"Native material compilation failed: {path}: {list(errors)}")
+        ue.EditorAssetLibrary.save_loaded_asset(material, only_if_is_dirty=False)
 
 
 def import_bundle(bundle_dir, destination="/Game/ElfentierThree", allow_pending=False):
@@ -228,9 +287,22 @@ def import_bundle(bundle_dir, destination="/Game/ElfentierThree", allow_pending=
             assets.extend(import_asset(payload_path(root, payload["path"]), destination + ("/Meshes" if fmt == "gltf_glb" else "/Surfaces"), options))
     materials = {}
     assets = list(dict.fromkeys(assets))
+    texture_assets = {}
+    for recipe in manifest["materials"]:
+        for source in recipe.get("inputs", []):
+            if source["kind"] == "texture" and source["path"] not in texture_assets:
+                imported = import_asset(payload_path(root, source["path"]), destination + "/Textures")
+                texture = ue.load_asset(imported[0])
+                # Grain normals are raw encoded data, intentionally sampled and
+                # reconstructed in HLSL, rather than UE's normal-map decoder.
+                texture.set_editor_property("srgb", "Normal" not in source["name"])
+                texture.set_editor_property("compression_settings", ue.TextureCompressionSettings.TC_DEFAULT)
+                ue.EditorAssetLibrary.save_loaded_asset(texture)
+                texture_assets[source["path"]] = texture
+                assets.extend(imported)
     for recipe in manifest["materials"]:
         if recipe["kind"] != "gltf_pbr":
-            materials[recipe["name"]] = create_native_material(recipe, destination + "/Materials")
+            materials[recipe["name"]] = create_native_material(recipe, destination + "/Materials", texture_assets=texture_assets)
     assigned = {name: 0 for name in materials}
     for path in assets:
         mesh = ue.load_asset(path)

@@ -75,8 +75,12 @@ export async function exportThreeBundle(scene, {
       let recipe = { name: id, kind: 'gltf_pbr', sourceName: material.name, sourceType: material.type };
       let replacement;
       try {
-        if (material.blending !== NormalBlending || material.wireframe || material.side === 1 || material.clippingPlanes?.length) error('MATERIAL_RENDER_STATE', obj.name, 'Blending/wireframe/back-face/clipping behavior requires a native adapter');
-        if (material.userData?.elfentierUE?.water) {
+        if (material.blending !== NormalBlending || material.wireframe || (material.side === 1 && !material.userData?.elfentierUE?.compiled) || material.clippingPlanes?.length) error('MATERIAL_RENDER_STATE', obj.name, 'Blending/wireframe/back-face/clipping behavior requires a native adapter');
+        if (material.userData?.elfentierUE?.compiled) {
+          recipe = { ...material.userData.elfentierUE.compiled, name: id };
+          if (recipe.kind !== 'compiled_shader' || recipe.output !== 'float4' || typeof recipe.hlsl !== 'string') throw new Error('Invalid compiled material recipe');
+          replacement = new MeshStandardMaterial({ color: 0xffffff });
+        } else if (material.userData?.elfentierUE?.water) {
           recipe = waterRecipe(material.userData.elfentierUE.water, id);
           warn('WATER_APPROXIMATION', obj.name, recipe.note);
           replacement = new MeshStandardMaterial({ color: new Color().fromArray(recipe.color), roughness: recipe.roughness });

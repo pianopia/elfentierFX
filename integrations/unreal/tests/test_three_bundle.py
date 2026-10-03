@@ -64,6 +64,21 @@ class BundleValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "default"):
             self.validate()
 
+    def test_compiled_material_texture_and_wpo_validation(self):
+        (self.root / "grains.tga").write_bytes(b"texture fixture")
+        texture = {"name": "Grains", "kind": "texture", "path": "grains.tga"}
+        self.manifest["materials"] = [{"name": "Sand", "kind": "compiled_shader", "hlsl": "return float4(1,1,1,1);",
+                                      "output": "float4", "inputs": [texture],
+                                      "wpo": {"kind": "compiled_shader", "output": "float3", "hlsl": "return float3(0,0,0);", "inputs": [texture]}}]
+        self.validate()
+        self.manifest["materials"][0]["wpo"]["inputs"] = [{"name": "Bad", "kind": "scalar", "value": 1}]
+        with self.assertRaisesRegex(ValueError, "matching"):
+            self.validate()
+        self.manifest["materials"][0].pop("wpo")
+        texture["path"] = "../grains.tga"
+        with self.assertRaisesRegex(ValueError, "escapes"):
+            self.validate()
+
 
 if __name__ == "__main__":
     unittest.main()
