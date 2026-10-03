@@ -151,12 +151,23 @@ cargo run -p vdb_convert -- from-smoke-preset /tmp/smoke.evol
 cargo run -p vdb_convert -- to-vdb /tmp/smoke.vdb --from-preset
 cargo run -p vdb_convert -- info /tmp/smoke.vdb
 cargo run -p vdb_convert -- from-vdb /tmp/smoke.vdb /tmp/smoke.evol
+cargo run -p vdb_convert -- to-vdb /tmp/density.vdb /tmp/smoke.evol --sequence --ue-space
 ```
 
 ## Future (out of scope for Alpha 2 spike)
 
-- Multi-frame `.vdb` sequences (one grid per frame in a single archive)
+- Multi-grid animated `.vdb` in a single archive (separate numbered VDB files are supported by `to-vdb --sequence`)
 - Liquid → VDB (level-set / fog from FLIP particles)
 - Live TCP bridge to running editors (interface stub comments only)
 - Full Niagara graph authoring
 - USD pipeline
+
+## External Three.js bundle (`elfentier_three_unreal_v1`)
+
+The [Three.js converter](../tools/three_to_unreal/README.md) uses a separate,
+versioned manifest and does not modify `elfentier_export_manifest_v1` readers.
+Payloads: `gltf_glb`, `elfentier_volume_texture_v1`,
+`elfentier_surface_cache_v1` (fixed-topology Y-up meter positions + triangle indices + fps),
+`alembic_geometry_cache`, `openvdb_sequence` (numbered density FloatGrids in cm/Z-up).
+Material recipes: `gltf_pbr`, `custom_expression` (typed GLSL expression → HLSL),
+`water_wpo`. `conversion-report.json` records diagnostics and pending bakes.

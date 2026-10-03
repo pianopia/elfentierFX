@@ -1,0 +1,12 @@
+{
+  "name": "@elfentierfx/three-to-unreal",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Three.js scene, material and FX interchange for Unreal Engine 5",
+  "exports": { ".": "./src/exporter.js", "./effects": "./src/effects.js", "./node": "./src/node.js", "./download": "./src/download.js", "./compiler": "./src/compiler.js", "./gpu-graph": "./src/gpu-graph.js", "./native-graph": "./src/native-graph.js", "./material-compiler": "./src/material-compiler.js" },
+  "bin": { "three-to-unreal": "./src/cli.js" },
+  "scripts": { "test": "node --test", "demo": "node src/cli.js examples/scene.mjs --out ../../artifacts/three-ue-demo" },
+  "engines": { "node": ">=20" },
+  "dependencies": { "three": "0.180.0", "fflate": "0.8.2" }
+}

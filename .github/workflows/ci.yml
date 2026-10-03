@@ -23,7 +23,9 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf \
-            mesa-vulkan-drivers
+            mesa-vulkan-drivers \
+            glslang-tools \
+            spirv-cross
 
       - name: Cache cargo
         uses: swatinem/rust-cache@v2
@@ -35,6 +37,9 @@ jobs:
 
       - name: Core tests
         run: cargo test -p elfentier_core
+
+      - name: Volume conversion tests
+        run: cargo test -p vdb_convert
 
       - name: Wgpu smoke preview tests
         env:
@@ -55,3 +60,17 @@ jobs:
       - name: Frontend typecheck
         working-directory: apps/desktop
         run: npm run typecheck
+
+      - name: Install Three.js converter dependencies
+        working-directory: tools/three_to_unreal
+        run: npm ci
+
+      - name: Three.js conversion tests
+        working-directory: tools/three_to_unreal
+        env:
+          GLSLANG_VALIDATOR: glslangValidator
+          SPIRV_CROSS: spirv-cross
+        run: npm test
+
+      - name: Unreal bundle preflight tests
+        run: python3 -m unittest discover -s integrations/unreal/tests -v

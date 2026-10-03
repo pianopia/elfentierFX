@@ -364,9 +364,12 @@ fn build_tree_from_dense(nx: usize, ny: usize, nz: usize, density: &[f32]) -> No
                 let mut values = Vec::with_capacity(512);
                 let mut active = Vec::with_capacity(512);
                 let mut has_active = false;
-                for lz in 0..LEAF_DIM {
+                // OpenVDB leaf offsets are x-major, z-fastest, unlike our
+                // dense interchange's x-fastest layout. Match pack_offset()
+                // and offset_to_local() or asymmetric grids transpose X/Z.
+                for lx in 0..LEAF_DIM {
                     for ly in 0..LEAF_DIM {
-                        for lx in 0..LEAF_DIM {
+                        for lz in 0..LEAF_DIM {
                             let value = sample(bx + lx as usize, by + ly as usize, bz + lz as usize);
                             let is_active = value > 1.0e-7;
                             values.push(value);
